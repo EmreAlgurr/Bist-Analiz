@@ -1,0 +1,392 @@
+package com.bist.api;
+
+import com.bist.model.Hisse;
+import com.google.gson.*;
+
+import java.io.IOException;
+import java.net.*;
+import java.net.http.*;
+import java.time.*;
+import java.util.*;
+import java.util.regex.*;
+
+/**
+ * Yahoo Finance REST endpoint'leri üzerinden BIST hisse verisi çeken istemci.
+ * <p>
+ * Kullanılan endpoint'ler:
+ * <ul>
+ *   <li><b>v8/finance/chart</b>  — Geçmiş kapanış fiyatları + temettü olayları</li>
+ *   <li><b>v10/finance/quoteSummary</b> — Güncel finansal rasyolar (crumb ile)</li>
+ * </ul>
+ *
+ * Yahoo Finance, quoteSummary için cookie + crumb doğrulaması gerektirir.
+ * Bu sınıf oturumu otomatik olarak yönetir.
+ *
+ * Thread-safe: İç HttpClient paylaşılır, Hisse nesneleri çağrı başına üretilir.
+ */
+public final class YahooFinanceClient {
+
+    // ── Sabitler ─────────────────────────────────────────────────────
+    private static final String CHART_URL =
+        "https://query1.finance.yahoo.com/v8/finance/chart/%s"
+        + "?range=%s&interval=1d&events=div";
+
+    private static final String SUMMARY_URL =
+        "https://query1.finance.yahoo.com/v10/finance/quoteSummary/%s"
+        + "?modules=defaultKeyStatistics,financialData,summaryDetail"
+        + "&crumb=%s";
+
+    private static final String CRUMB_URL =
+        "https://query2.finance.yahoo.com/v1/test/getcrumb";
+
+    private static final String CONSENT_URL =
+        "https://fc.yahoo.com/cusc/t";
+
+    private static final String USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        + "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+    // ── Alan Değişkenleri ────────────────────────────────────────────
+    private final HttpClient httpClient;
+    private final Gson gson;
+    private final String range; // "5y", "10y", "max" vb.
+    private final CookieManager cookieManager;
+
+    /** Oturum crumb değeri — lazy initialize edilir. */
+    private String crumb;
+
+    // ── Yapıcılar ───────────────────────────────────────────────────
+    public YahooFinanceClient() {
+        this("5y");
+    }
+
+    public YahooFinanceClient(String range) {
+        this.cookieManager = new CookieManager();
+        this.cookieManager.setCookiePolicy(CookiePolicy.ACCEPT_ALL);
+        this.httpClient = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofSeconds(15))
+                .cookieHandler(cookieManager)
+                .build();
+        this.gson  = new Gson();
+        this.range = range;
+    }
+
+    // ── Genel Veri Çekme ─────────────────────────────────────────────
+
+    /**
+     * Verilen sembol için hem geçmiş fiyat/temettü hem de rasyoları
+     * tek bir {@link Hisse} nesnesinde birleştirir.
+     */
+    public Hisse hisseVerisiCek(String sembol) throws IOException, InterruptedException {
+        System.out.printf("  ⏳  %s verisi çekiliyor...%n", sembol);
+
+        Hisse hisse = new Hisse(sembol, sembol);
+
+        // 1) Geçmiş fiyatlar ve temettüler
+        gecmisFiyatVeTemettuCek(hisse);
+
+        // 2) Finansal rasyolar (crumb ile)
+        rasyolariCek(hisse);
+
+        System.out.printf("  ✅  %s — %d gün kapanış, %d temettü kaydı, yield=%.2f%%, roe=%.2f%%, payout=%.2f%%%n",
+                sembol,
+                hisse.getGunlukKapanis().size(),
+                hisse.getTemettuGecmisi().size(),
+                hisse.getDividendYield() * 100,
+                hisse.getRoe() * 100,
+                hisse.getPayoutRatio() * 100);
+
+        return hisse;
+    }
+
+    // ── Yahoo Oturum Yönetimi ────────────────────────────────────────
+
+    /**
+     * Yahoo Finance'in crumb mekanizmasını başlatır.
+     * 1) Consent sayfasına istek atarak oturum cookie'si alır.
+     * 2) Crumb endpoint'inden crumb token'ı çeker.
+     */
+    private void oturumBaslat() throws IOException, InterruptedException {
+        if (crumb != null) return; // Zaten oturum açık
+
+        System.out.println("  🔑  Yahoo Finance oturumu başlatılıyor...");
+
+        // Adım 1: Consent sayfasına GET — cookie al
+        try {
+            httpGetRaw(CONSENT_URL);
+        } catch (IOException e) {
+            // 404 dönebilir, sorun yok — cookie alınmış olur
+        }
+
+        // Adım 2: Crumb al
+        String crumbResponse = httpGetRaw(CRUMB_URL);
+        if (crumbResponse == null || crumbResponse.isBlank()) {
+            System.err.println("  ⚠️  Crumb alınamadı, rasyolar çekilemeyebilir.");
+            return;
+        }
+
+        this.crumb = crumbResponse.trim();
+        System.out.printf("  🔑  Crumb alındı: %s%n", crumb);
+    }
+
+    // ── Geçmiş Fiyat + Temettü ───────────────────────────────────────
+
+    private void gecmisFiyatVeTemettuCek(Hisse hisse) throws IOException, InterruptedException {
+        String url = String.format(CHART_URL, hisse.getSembol(), range);
+        String json = httpGet(url);
+
+        JsonObject root   = JsonParser.parseString(json).getAsJsonObject();
+        JsonObject chart  = root.getAsJsonObject("chart");
+
+        // Hata kontrolü
+        JsonElement error = chart.get("error");
+        if (error != null && !error.isJsonNull()) {
+            throw new IOException("Yahoo Finance hata döndürdü: " + error);
+        }
+
+        JsonObject result = chart.getAsJsonArray("result").get(0).getAsJsonObject();
+
+        // ── Kapanış fiyatları ──
+        JsonArray timestamps = result.getAsJsonArray("timestamp");
+        JsonObject indicators = result.getAsJsonObject("indicators");
+        JsonArray closes = indicators
+                .getAsJsonArray("quote").get(0).getAsJsonObject()
+                .getAsJsonArray("close");
+
+        if (timestamps != null && closes != null) {
+            for (int i = 0; i < timestamps.size(); i++) {
+                JsonElement closeEl = closes.get(i);
+                if (closeEl.isJsonNull()) continue;
+
+                long epoch = timestamps.get(i).getAsLong();
+                LocalDate tarih = Instant.ofEpochSecond(epoch)
+                        .atZone(ZoneId.of("Europe/Istanbul"))
+                        .toLocalDate();
+                double fiyat = closeEl.getAsDouble();
+                hisse.kapanisEkle(tarih, fiyat);
+            }
+        }
+
+        // ── Temettü olayları ──
+        JsonObject events = result.getAsJsonObject("events");
+        if (events != null && events.has("dividends")) {
+            JsonObject divs = events.getAsJsonObject("dividends");
+            for (String key : divs.keySet()) {
+                JsonObject div = divs.getAsJsonObject(key);
+                long epoch   = div.get("date").getAsLong();
+                double amount = div.get("amount").getAsDouble();
+
+                LocalDate tarih = Instant.ofEpochSecond(epoch)
+                        .atZone(ZoneId.of("Europe/Istanbul"))
+                        .toLocalDate();
+                hisse.temettuEkle(tarih, amount);
+            }
+        }
+
+        // ── Chart meta'dan temel bilgileri çıkarmayı dene ──
+        // (quoteSummary çalışmazsa yedek kaynak)
+        rasyolariChartMetadanCikar(hisse, result);
+    }
+
+    // ── Chart Meta'dan Rasyo Çıkarma (Yedek) ────────────────────────
+
+    /**
+     * Chart endpoint'inin meta bloğundan mevcut bilgileri çıkarır.
+     * quoteSummary 401 döndüğünde yedek bilgi kaynağı.
+     */
+    private void rasyolariChartMetadanCikar(Hisse hisse, JsonObject chartResult) {
+        try {
+            JsonObject meta = chartResult.getAsJsonObject("meta");
+            if (meta == null) return;
+
+            // Bazı durumlarda dividendYield meta'da olabiliyor
+            if (meta.has("dividendYield") && !meta.get("dividendYield").isJsonNull()) {
+                double yield = meta.get("dividendYield").getAsDouble();
+                if (hisse.getDividendYield() == 0.0 && yield > 0) {
+                    hisse.setDividendYield(yield);
+                }
+            }
+        } catch (Exception ignored) {
+            // Yedek kaynak — hata kritik değil
+        }
+    }
+
+    // ── Finansal Rasyolar (Crumb ile) ────────────────────────────────
+
+    private void rasyolariCek(Hisse hisse) throws IOException, InterruptedException {
+        try {
+            // Oturumu başlat (lazy)
+            oturumBaslat();
+
+            if (crumb == null) {
+                // Crumb alınamadıysa, geçmiş verilerden hesapla
+                rasyolariGecmistenHesapla(hisse);
+                return;
+            }
+
+            String url = String.format(SUMMARY_URL, hisse.getSembol(), crumb);
+            String json = httpGet(url);
+            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+            JsonObject summary = root.getAsJsonObject("quoteSummary");
+
+            JsonElement errorEl = summary.get("error");
+            if (errorEl != null && !errorEl.isJsonNull()) {
+                System.err.printf("  ⚠️  %s rasyoları API hatası, geçmişten hesaplanıyor.%n",
+                        hisse.getSembol());
+                rasyolariGecmistenHesapla(hisse);
+                return;
+            }
+
+            JsonArray resultArr = summary.getAsJsonArray("result");
+            if (resultArr == null || resultArr.isEmpty()) {
+                rasyolariGecmistenHesapla(hisse);
+                return;
+            }
+
+            JsonObject result = resultArr.get(0).getAsJsonObject();
+
+            // summaryDetail → dividendYield, payoutRatio
+            Optional.ofNullable(result.getAsJsonObject("summaryDetail"))
+                    .ifPresent(sd -> {
+                        double yield = rawDouble(sd, "dividendYield");
+                        double payout = rawDouble(sd, "payoutRatio");
+                        if (yield > 0) hisse.setDividendYield(yield);
+                        if (payout > 0) hisse.setPayoutRatio(payout);
+                    });
+
+            // financialData → returnOnEquity
+            Optional.ofNullable(result.getAsJsonObject("financialData"))
+                    .ifPresent(fd -> {
+                        double roe = rawDouble(fd, "returnOnEquity");
+                        if (roe > 0) hisse.setRoe(roe);
+                    });
+
+            // defaultKeyStatistics → ek bilgiler
+            Optional.ofNullable(result.getAsJsonObject("defaultKeyStatistics"))
+                    .ifPresent(ks -> {
+                        if (hisse.getPayoutRatio() == 0.0) {
+                            double payout = rawDouble(ks, "payoutRatio");
+                            if (payout > 0) hisse.setPayoutRatio(payout);
+                        }
+                    });
+
+            // API'den rasyolar gelemediyse geçmişten hesapla
+            if (hisse.getDividendYield() == 0.0 || hisse.getRoe() == 0.0) {
+                rasyolariGecmistenHesapla(hisse);
+            }
+
+        } catch (IOException e) {
+            System.err.printf("  ⚠️  %s API erişim hatası (%s), geçmişten hesaplanıyor.%n",
+                    hisse.getSembol(), e.getMessage());
+            rasyolariGecmistenHesapla(hisse);
+        } catch (Exception e) {
+            System.err.printf("  ⚠️  %s rasyoları alınamadı: %s%n",
+                    hisse.getSembol(), e.getMessage());
+            rasyolariGecmistenHesapla(hisse);
+        }
+    }
+
+    // ── Geçmiş Veriden Rasyo Hesaplama (Fallback) ────────────────────
+
+    /**
+     * API'den rasyolar alınamazsa, geçmiş temettü ve fiyat verisinden
+     * tahmini dividend yield hesaplar.
+     */
+    private void rasyolariGecmistenHesapla(Hisse hisse) {
+        try {
+            var temettuMap = hisse.getTemettuGecmisi();
+            var kapanisMap = hisse.getGunlukKapanis();
+
+            if (temettuMap.isEmpty() || kapanisMap.isEmpty()) return;
+
+            // Son 1 yılda ödenen toplam temettü
+            LocalDate birYilOnce = kapanisMap.lastKey().minusYears(1);
+            double sonBirYilTemettu = temettuMap.entrySet().stream()
+                    .filter(e -> !e.getKey().isBefore(birYilOnce))
+                    .mapToDouble(Map.Entry::getValue)
+                    .sum();
+
+            // Güncel fiyat
+            double sonFiyat = kapanisMap.lastEntry().getValue();
+
+            // Tahmini Dividend Yield
+            if (hisse.getDividendYield() == 0.0 && sonFiyat > 0) {
+                double tahminiYield = sonBirYilTemettu / sonFiyat;
+                hisse.setDividendYield(tahminiYield);
+            }
+
+            // NOT: ROE ve Payout Ratio fiyat/temettü verisinden doğrudan
+            // hesaplanamaz (bilanço verisi gerektirir). Bu değerler için
+            // API erişimi zorunludur.
+
+        } catch (Exception e) {
+            System.err.printf("  ⚠️  %s geçmişten rasyo hesaplama hatası: %s%n",
+                    hisse.getSembol(), e.getMessage());
+        }
+    }
+
+    // ── Yardımcılar ──────────────────────────────────────────────────
+
+    /**
+     * Yahoo Finance JSON yapısında sayısal değerler bazen
+     * {@code {"raw": 0.05, "fmt": "5.00%"}} biçiminde gelir.
+     */
+    private double rawDouble(JsonObject parent, String key) {
+        JsonElement el = parent.get(key);
+        if (el == null || el.isJsonNull()) return 0.0;
+
+        if (el.isJsonObject()) {
+            JsonElement raw = el.getAsJsonObject().get("raw");
+            return (raw != null && !raw.isJsonNull()) ? raw.getAsDouble() : 0.0;
+        }
+        try {
+            return el.getAsDouble();
+        } catch (NumberFormatException e) {
+            return 0.0;
+        }
+    }
+
+    private String httpGet(String url) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", "application/json")
+                .GET()
+                .timeout(Duration.ofSeconds(30))
+                .build();
+
+        HttpResponse<String> response =
+                httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            throw new IOException(String.format(
+                "HTTP %d — %s", response.statusCode(), url));
+        }
+
+        return response.body();
+    }
+
+    /**
+     * HTTP GET — durum kodunu kontrol etmez (cookie toplama amaçlı).
+     */
+    private String httpGetRaw(String url) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", "*/*")
+                .GET()
+                .timeout(Duration.ofSeconds(15))
+                .build();
+
+        HttpResponse<String> response =
+                httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            throw new IOException(String.format(
+                "HTTP %d — %s", response.statusCode(), url));
+        }
+
+        return response.body();
+    }
+}

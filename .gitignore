@@ -1,0 +1,25 @@
+# Java & Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Databases
+*.db
+*.db-journal
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Log files
+*.log

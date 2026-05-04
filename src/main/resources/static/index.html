@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BIST Analiz v2.0 — Temettü & DRIP Motoru</title>
+    <meta name="description" content="Borsa İstanbul hisseleri için temel analiz filtreleme ve DRIP simülasyon platformu">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<header id="app-header">
+    <div class="header-inner">
+        <div class="logo">
+            <span class="logo-icon">📊</span>
+            <div>
+                <h1>BIST Analiz</h1>
+                <span class="version">v2.0 — Temettü & DRIP Motoru</span>
+            </div>
+        </div>
+        <div class="header-stats" id="headerStats">
+            <div class="stat-chip"><span class="dot green"></span> Hazır</div>
+        </div>
+    </div>
+</header>
+
+<!-- ═══ MAIN CONTENT ═══ -->
+<main id="app-main">
+
+    <!-- ── Filter Panel ── -->
+    <section class="filter-panel glass-card" id="filterPanel">
+        <h2 class="panel-title">🔍 Filtreleme Kriterleri</h2>
+        <div class="filter-grid">
+            <div class="filter-group">
+                <label for="minYield">Min Temettü Verimi (%)</label>
+                <input type="number" id="minYield" value="2" step="0.5" min="0" max="100">
+            </div>
+            <div class="filter-group">
+                <label for="minRoe">Min ROE (%)</label>
+                <input type="number" id="minRoe" value="10" step="1" min="0" max="100">
+            </div>
+            <div class="filter-group">
+                <label for="minPayout">Min Dağıtım Oranı (%)</label>
+                <input type="number" id="minPayout" value="10" step="5" min="0" max="100">
+            </div>
+            <div class="filter-group">
+                <label for="maxPayout">Max Dağıtım Oranı (%)</label>
+                <input type="number" id="maxPayout" value="90" step="5" min="0" max="1000">
+            </div>
+            <div class="filter-group">
+                <label for="aylikEkGirdi">Aylık Ek Yatırım (TL)</label>
+                <input type="number" id="aylikEkGirdi" value="5000" step="500" min="0">
+            </div>
+            <div class="filter-group search-group">
+                <label for="searchBox">🔎 Hisse Ara</label>
+                <input type="text" id="searchBox" placeholder="TUPRS, THYAO...">
+            </div>
+            <div class="filter-group btn-group" style="display: flex; gap: 10px; grid-column: 1 / -1;">
+                <button id="btnScan" class="btn-primary" onclick="startScan()">
+                    🚀 Piyasayı Tara
+                </button>
+                <button id="btnPortfolio" class="btn-primary" onclick="optimizePortfolio()" style="background: linear-gradient(135deg, #10b981, #059669);">
+                    📦 Sepeti Optimize Et
+                </button>
+            </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="progress-container" id="progressContainer" style="display:none;">
+            <div class="progress-info">
+                <span id="progressText">Taranıyor...</span>
+                <span id="progressCount">0 / 100</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Results Table ── -->
+    <section class="results-section glass-card" id="resultsSection" style="display:none;">
+        <div class="results-header">
+            <h2 class="panel-title">📋 Tarama Sonuçları</h2>
+            <div class="results-meta">
+                <span id="filteredCount" class="badge">0 hisse</span>
+                <span id="totalCount" class="badge badge-dim">/ 0 toplam</span>
+            </div>
+        </div>
+        <div class="table-wrapper">
+            <table id="stockTable">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"><input type="checkbox" id="selectAll" onclick="toggleSelectAll()"></th>
+                        <th class="sortable" data-col="sembol" onclick="sortTable('sembol')">Sembol ↕</th>
+                        <th class="sortable" data-col="sonFiyat" onclick="sortTable('sonFiyat')">Son Fiyat ↕</th>
+                        <th class="sortable" data-col="dividendYield" onclick="sortTable('dividendYield')">Yield ↕</th>
+                        <th class="sortable" data-col="roe" onclick="sortTable('roe')">ROE ↕</th>
+                        <th class="sortable" data-col="payoutRatio" onclick="sortTable('payoutRatio')">Payout ↕</th>
+                        <th>Temettü</th>
+                        <th>İşlem</th>
+                    </tr>
+                </thead>
+                <tbody id="stockTableBody"></tbody>
+            </table>
+        </div>
+    </section>
+</main>
+
+<!-- ═══ DRIP MODAL ═══ -->
+<div class="modal-overlay" id="dripModal" style="display:none;" onclick="closeModal(event)">
+    <div class="modal-content glass-card" onclick="event.stopPropagation()">
+        <button class="modal-close" onclick="closeDripModal()">✕</button>
+        <div id="dripModalBody">
+            <div class="modal-loading">
+                <div class="spinner"></div>
+                <p>DRIP Simülasyonu hesaplanıyor...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>
