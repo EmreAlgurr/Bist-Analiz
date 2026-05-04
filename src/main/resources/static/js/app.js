@@ -121,6 +121,7 @@ function toggleSelectAll() {
 async function openDrip(sembol) {
     const modal = document.getElementById('dripModal');
     const body = document.getElementById('dripModalBody');
+    const sermaye = parseFloat(document.getElementById('baslangicSermaye').value) || 0;
     const aylik = parseFloat(document.getElementById('aylikEkGirdi').value) || 0;
     
     modal.style.display = 'flex';
@@ -130,7 +131,7 @@ async function openDrip(sembol) {
         const res = await fetch('/api/drip', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId, sembol, sermaye: 80000, aylikEkGirdi: aylik })
+            body: JSON.stringify({ sessionId, sembol, sermaye: sermaye, aylikEkGirdi: aylik })
         });
         const d = await res.json();
         body.innerHTML = buildDripHTML(d);
@@ -165,8 +166,12 @@ function buildDripHTML(d) {
         </div>
         <div class="drip-metrics">
             <div class="metric-card">
-                <div class="metric-label">Toplam Yatırılan</div>
+                <div class="metric-label">Nominal Yatırılan</div>
                 <div class="metric-value">${fmtMoney(d.toplamYatirilan)}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Reel Maliyet</div>
+                <div class="metric-value val-neutral">${fmtMoney(d.toplamReelYatirilan)}</div>
             </div>
             <div class="metric-card">
                 <div class="metric-label">Güncel Lot</div>
@@ -204,6 +209,7 @@ async function optimizePortfolio() {
 
     const modal = document.getElementById('dripModal');
     const body = document.getElementById('dripModalBody');
+    const sermaye = parseFloat(document.getElementById('baslangicSermaye').value) || 0;
     const aylik = parseFloat(document.getElementById('aylikEkGirdi').value) || 0;
     
     modal.style.display = 'flex';
@@ -213,7 +219,7 @@ async function optimizePortfolio() {
         const res = await fetch('/api/portfolio', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ semboller: symbols, sermaye: 80000, aylikEkGirdi: aylik })
+            body: JSON.stringify({ semboller: symbols, sermaye: sermaye, aylikEkGirdi: aylik })
         });
         if (!res.ok) throw new Error("Optimizasyon başarısız oldu.");
         const d = await res.json();
@@ -240,8 +246,12 @@ function buildPortfolioHTML(d) {
         </div>
         <div class="drip-metrics">
             <div class="metric-card">
-                <div class="metric-label">Toplam Yatırılan</div>
+                <div class="metric-label">Nominal Yatırılan</div>
                 <div class="metric-value">${fmtMoney(d.toplamYatirilan)}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Reel Maliyet</div>
+                <div class="metric-value val-neutral">${fmtMoney(d.toplamReelYatirilan)}</div>
             </div>
             <div class="metric-card">
                 <div class="metric-label">Nominal Bakiye</div>

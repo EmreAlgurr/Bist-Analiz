@@ -44,7 +44,7 @@ public class HisseService {
         double portfoyDegeri, double reelDeger, double toplamGetiri, double cagr,
         double yilSayisi, String baslangicTarih, String bitisTarih,
         int temettuDagitimSayisi, double baslangicSermayesi, double toplamYatirilan,
-        double sonFiyat, double kalanNakit, List<TemettuOlay> olaylar
+        double toplamReelYatirilan, double sonFiyat, double kalanNakit, List<TemettuOlay> olaylar
     ) {}
 
     public record TemettuOlay(
@@ -96,6 +96,7 @@ public class HisseService {
         double kalanNakit = sermaye - (lotSayisi * ilkFiyat);
         double basLot = lotSayisi;
         double toplamYatirilan = sermaye;
+        double toplamReelYatirilan = sermaye;
 
         List<TemettuOlay> olaylar = new ArrayList<>();
         int sayac = 0;
@@ -107,6 +108,11 @@ public class HisseService {
             if (ym.isAfter(currentMonth)) {
                 currentMonth = ym;
                 toplamYatirilan += aylikEkGirdi;
+                
+                double yil = ChronoUnit.DAYS.between(basTarih, date) / 365.25;
+                double deflator = Math.pow(1.40, yil);
+                toplamReelYatirilan += (aylikEkGirdi / deflator);
+                
                 kalanNakit += aylikEkGirdi;
                 
                 Map.Entry<LocalDate, Double> floor = kapanis.floorEntry(date);
@@ -148,7 +154,7 @@ public class HisseService {
 
         return new DripSonuc(sembol, basLot, lotSayisi, portfoy, reelDeger, topGetiri, cagr,
                 yil, basTarih.toString(), bitTarih.toString(), sayac, sermaye, toplamYatirilan,
-                sonF, kalanNakit, olaylar);
+                toplamReelYatirilan, sonF, kalanNakit, olaylar);
     }
 
     private TreeMap<LocalDate, Double> parseMap(String json) {

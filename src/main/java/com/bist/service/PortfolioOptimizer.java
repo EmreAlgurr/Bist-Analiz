@@ -48,9 +48,12 @@ public class PortfolioOptimizer {
                 w[j] = rand.nextDouble();
                 sum += w[j];
             }
-            for (int j = 0; j < n; j++) {
+            double total = 0;
+            for (int j = 0; j < n - 1; j++) {
                 w[j] /= sum;
+                total += w[j];
             }
+            w[n - 1] = 1.0 - total; // Son ağırlık (1 - diğerleri) ile %100 toplam garantilenir.
 
             double var = calculatePortfolioVariance(w, covMatrix);
             if (var < minVar) {

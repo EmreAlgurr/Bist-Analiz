@@ -1,6 +1,6 @@
 package com.bist.api;
 
-import com.bist.model.Hisse;
+import com.bist.entity.HisseEntity;
 import com.google.gson.*;
 
 import java.io.IOException;
@@ -22,11 +22,11 @@ import java.util.regex.*;
  * Yahoo Finance, quoteSummary için cookie + crumb doğrulaması gerektirir.
  * Bu sınıf oturumu otomatik olarak yönetir.
  *
- * Thread-safe: İç HttpClient paylaşılır, Hisse nesneleri çağrı başına üretilir.
+ * Thread-safe: İç HttpClient paylaşılır, HisseEntity nesneleri çağrı başına üretilir.
  */
 public final class YahooFinanceClient {
 
-    // ── Sabitler ─────────────────────────────────────────────────────
+    // ... (sabitler ve diğer alanlar aynı kalacak) ...
     private static final String CHART_URL =
         "https://query1.finance.yahoo.com/v8/finance/chart/%s"
         + "?range=%s&interval=1d&events=div";
@@ -46,16 +46,12 @@ public final class YahooFinanceClient {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         + "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
-    // ── Alan Değişkenleri ────────────────────────────────────────────
     private final HttpClient httpClient;
     private final Gson gson;
-    private final String range; // "5y", "10y", "max" vb.
+    private final String range;
     private final CookieManager cookieManager;
-
-    /** Oturum crumb değeri — lazy initialize edilir. */
     private String crumb;
 
-    // ── Yapıcılar ───────────────────────────────────────────────────
     public YahooFinanceClient() {
         this("5y");
     }
@@ -72,16 +68,20 @@ public final class YahooFinanceClient {
         this.range = range;
     }
 
-    // ── Genel Veri Çekme ─────────────────────────────────────────────
-
     /**
      * Verilen sembol için hem geçmiş fiyat/temettü hem de rasyoları
-     * tek bir {@link Hisse} nesnesinde birleştirir.
+     * tek bir {@link HisseEntity} nesnesinde birleştirir.
      */
-    public Hisse hisseVerisiCek(String sembol) throws IOException, InterruptedException {
+    public HisseEntity hisseVerisiCek(String sembol) throws IOException, InterruptedException {
         System.out.printf("  ⏳  %s verisi çekiliyor...%n", sembol);
 
-        Hisse hisse = new Hisse(sembol, sembol);
+        HisseEntity hisse = new HisseEntity();
+        hisse.setSembol(sembol);
+        hisse.setAd(sembol);
+
+        // Map'leri başlat (null pointer almamak için)
+        hisse.setGunlukKapanis(new TreeMap<>());
+        hisse.setTemettuGecmisi(new TreeMap<>());
 
         // 1) Geçmiş fiyatlar ve temettüler
         gecmisFiyatVeTemettuCek(hisse);
@@ -132,7 +132,7 @@ public final class YahooFinanceClient {
 
     // ── Geçmiş Fiyat + Temettü ───────────────────────────────────────
 
-    private void gecmisFiyatVeTemettuCek(Hisse hisse) throws IOException, InterruptedException {
+    private void gecmisFiyatVeTemettuCek(HisseEntity hisse) throws IOException, InterruptedException {
         String url = String.format(CHART_URL, hisse.getSembol(), range);
         String json = httpGet(url);
 
@@ -164,7 +164,7 @@ public final class YahooFinanceClient {
                         .atZone(ZoneId.of("Europe/Istanbul"))
                         .toLocalDate();
                 double fiyat = closeEl.getAsDouble();
-                hisse.kapanisEkle(tarih, fiyat);
+                hisse.getGunlukKapanis().put(tarih, fiyat);
             }
         }
 
@@ -180,47 +180,37 @@ public final class YahooFinanceClient {
                 LocalDate tarih = Instant.ofEpochSecond(epoch)
                         .atZone(ZoneId.of("Europe/Istanbul"))
                         .toLocalDate();
-                hisse.temettuEkle(tarih, amount);
+                hisse.getTemettuGecmisi().put(tarih, amount);
             }
         }
 
         // ── Chart meta'dan temel bilgileri çıkarmayı dene ──
-        // (quoteSummary çalışmazsa yedek kaynak)
         rasyolariChartMetadanCikar(hisse, result);
     }
 
     // ── Chart Meta'dan Rasyo Çıkarma (Yedek) ────────────────────────
 
-    /**
-     * Chart endpoint'inin meta bloğundan mevcut bilgileri çıkarır.
-     * quoteSummary 401 döndüğünde yedek bilgi kaynağı.
-     */
-    private void rasyolariChartMetadanCikar(Hisse hisse, JsonObject chartResult) {
+    private void rasyolariChartMetadanCikar(HisseEntity hisse, JsonObject chartResult) {
         try {
             JsonObject meta = chartResult.getAsJsonObject("meta");
             if (meta == null) return;
 
-            // Bazı durumlarda dividendYield meta'da olabiliyor
             if (meta.has("dividendYield") && !meta.get("dividendYield").isJsonNull()) {
                 double yield = meta.get("dividendYield").getAsDouble();
                 if (hisse.getDividendYield() == 0.0 && yield > 0) {
                     hisse.setDividendYield(yield);
                 }
             }
-        } catch (Exception ignored) {
-            // Yedek kaynak — hata kritik değil
-        }
+        } catch (Exception ignored) {}
     }
 
     // ── Finansal Rasyolar (Crumb ile) ────────────────────────────────
 
-    private void rasyolariCek(Hisse hisse) throws IOException, InterruptedException {
+    private void rasyolariCek(HisseEntity hisse) throws IOException, InterruptedException {
         try {
-            // Oturumu başlat (lazy)
             oturumBaslat();
 
             if (crumb == null) {
-                // Crumb alınamadıysa, geçmiş verilerden hesapla
                 rasyolariGecmistenHesapla(hisse);
                 return;
             }
@@ -232,8 +222,6 @@ public final class YahooFinanceClient {
 
             JsonElement errorEl = summary.get("error");
             if (errorEl != null && !errorEl.isJsonNull()) {
-                System.err.printf("  ⚠️  %s rasyoları API hatası, geçmişten hesaplanıyor.%n",
-                        hisse.getSembol());
                 rasyolariGecmistenHesapla(hisse);
                 return;
             }
@@ -246,7 +234,6 @@ public final class YahooFinanceClient {
 
             JsonObject result = resultArr.get(0).getAsJsonObject();
 
-            // summaryDetail → dividendYield, payoutRatio
             Optional.ofNullable(result.getAsJsonObject("summaryDetail"))
                     .ifPresent(sd -> {
                         double yield = rawDouble(sd, "dividendYield");
@@ -255,14 +242,12 @@ public final class YahooFinanceClient {
                         if (payout > 0) hisse.setPayoutRatio(payout);
                     });
 
-            // financialData → returnOnEquity
             Optional.ofNullable(result.getAsJsonObject("financialData"))
                     .ifPresent(fd -> {
                         double roe = rawDouble(fd, "returnOnEquity");
                         if (roe > 0) hisse.setRoe(roe);
                     });
 
-            // defaultKeyStatistics → ek bilgiler
             Optional.ofNullable(result.getAsJsonObject("defaultKeyStatistics"))
                     .ifPresent(ks -> {
                         if (hisse.getPayoutRatio() == 0.0) {
@@ -271,53 +256,34 @@ public final class YahooFinanceClient {
                         }
                     });
 
-            // API'den rasyolar gelemediyse geçmişten hesapla
             if (hisse.getDividendYield() == 0.0 || hisse.getRoe() == 0.0) {
                 rasyolariGecmistenHesapla(hisse);
             }
 
-        } catch (IOException e) {
-            System.err.printf("  ⚠️  %s API erişim hatası (%s), geçmişten hesaplanıyor.%n",
-                    hisse.getSembol(), e.getMessage());
-            rasyolariGecmistenHesapla(hisse);
         } catch (Exception e) {
-            System.err.printf("  ⚠️  %s rasyoları alınamadı: %s%n",
-                    hisse.getSembol(), e.getMessage());
             rasyolariGecmistenHesapla(hisse);
         }
     }
 
     // ── Geçmiş Veriden Rasyo Hesaplama (Fallback) ────────────────────
 
-    /**
-     * API'den rasyolar alınamazsa, geçmiş temettü ve fiyat verisinden
-     * tahmini dividend yield hesaplar.
-     */
-    private void rasyolariGecmistenHesapla(Hisse hisse) {
+    private void rasyolariGecmistenHesapla(HisseEntity hisse) {
         try {
             var temettuMap = hisse.getTemettuGecmisi();
             var kapanisMap = hisse.getGunlukKapanis();
 
             if (temettuMap.isEmpty() || kapanisMap.isEmpty()) return;
 
-            // Son 1 yılda ödenen toplam temettü
             LocalDate birYilOnce = kapanisMap.lastKey().minusYears(1);
             double sonBirYilTemettu = temettuMap.entrySet().stream()
                     .filter(e -> !e.getKey().isBefore(birYilOnce))
                     .mapToDouble(Map.Entry::getValue)
                     .sum();
 
-            // Güncel fiyat
             double sonFiyat = kapanisMap.lastEntry().getValue();
+            hisse.setSonFiyat(sonFiyat);
 
-            // Tahmini Dividend Yield
             if (hisse.getDividendYield() == 0.0 && sonFiyat > 0) {
-                double tahminiYield = sonBirYilTemettu / sonFiyat;
-                hisse.setDividendYield(tahminiYield);
-            }
-
-            // NOT: ROE ve Payout Ratio fiyat/temettü verisinden doğrudan
-            // hesaplanamaz (bilanço verisi gerektirir). Bu değerler için
             // API erişimi zorunludur.
 
         } catch (Exception e) {

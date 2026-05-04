@@ -2,8 +2,9 @@ package com.bist.service;
 
 import com.bist.api.YahooFinanceClient;
 import com.bist.data.Bist100;
+import com.bist.api.YahooFinanceClient;
+import com.bist.data.Bist100;
 import com.bist.entity.HisseEntity;
-import com.bist.model.Hisse;
 import com.bist.repository.HisseRepository;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -26,9 +27,6 @@ public class SyncService {
         this.gson = new GsonBuilder().create();
     }
 
-    /**
-     * Uygulama ilk açıldığında veritabanı boşsa ilk senkronizasyonu başlatır.
-     */
     @PostConstruct
     public void initDbIfEmpty() {
         if (repository.count() == 0) {
@@ -37,10 +35,6 @@ public class SyncService {
         }
     }
 
-    /**
-     * Cron Job: Her gece saat 03:00'te çalışır.
-     * Rate-Limit yememek için istekler arasına Thread.sleep(2000) koyulmuştur.
-     */
     @Scheduled(cron = "0 0 3 * * ?")
     public void geceSenkronizasyonu() {
         System.out.println("🌙 Gece senkronizasyonu başlıyor (BIST-100)...");
@@ -53,32 +47,33 @@ public class SyncService {
         for (String sembol : Bist100.SEMBOLLER) {
             try {
                 System.out.println("⬇️ DB'ye Çekiliyor: " + sembol);
-                Hisse h = client.hisseVerisiCek(sembol);
+                HisseEntity h = client.hisseVerisiCek(sembol);
 
-                // Veritabanında varsa Update (orElse ile yoksa Insert)
-                HisseEntity entity = repository.findById(sembol).orElse(new HisseEntity());
-                
-                entity.setSembol(h.getSembol());
-                entity.setDividendYield(h.getDividendYield());
-                entity.setRoe(h.getRoe());
-                entity.setPayoutRatio(h.getPayoutRatio());
-                entity.setSonFiyat(h.getGunlukKapanis().isEmpty() ? 0.0 : h.sonKapanis());
+                // DB'de varsa üzerine yaz (update), yoksa yeni kayıt
+                HisseEntity entity = repository.findById(sembol).orElse(h);
+                if (entity != h) {
+                    entity.setDividendYield(h.getDividendYield());
+                    entity.setRoe(h.getRoe());
+                    entity.setPayoutRatio(h.getPayoutRatio());
+                    entity.setSonFiyat(h.getSonFiyat());
+                    entity.setGunlukKapanis(h.getGunlukKapanis());
+                    entity.setTemettuGecmisi(h.getTemettuGecmisi());
+                }
+
                 entity.setTemettuSayisi(h.getTemettuGecmisi().size());
                 entity.setGunSayisi(h.getGunlukKapanis().size());
 
-                // Karmaşık Map yapılarını (Tarih -> Değer) SQLite'a basit TEXT (JSON) olarak kaydediyoruz
-                Map<String, Double> kapanisStrMap = h.getGunlukKapanis().entrySet().stream()
+                // JSON Serileştirme
+                Map<String, Double> pMap = h.getGunlukKapanis().entrySet().stream()
                         .collect(Collectors.toMap(e -> e.getKey().toString(), Map.Entry::getValue));
-                Map<String, Double> temettuStrMap = h.getTemettuGecmisi().entrySet().stream()
+                Map<String, Double> dMap = h.getTemettuGecmisi().entrySet().stream()
                         .collect(Collectors.toMap(e -> e.getKey().toString(), Map.Entry::getValue));
 
-                entity.setKapanisGecmisiJson(gson.toJson(kapanisStrMap));
-                entity.setTemettuGecmisiJson(gson.toJson(temettuStrMap));
+                entity.setKapanisGecmisiJson(gson.toJson(pMap));
+                entity.setTemettuGecmisiJson(gson.toJson(dMap));
                 entity.setSonGuncelleme(LocalDateTime.now());
 
                 repository.save(entity);
-
-                // Yahoo Finance Rate Limit koruması
                 Thread.sleep(2000);
 
             } catch (Exception e) {

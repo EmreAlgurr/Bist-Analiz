@@ -32,6 +32,7 @@ public class PortfolioSimulationService {
         double baslangicSermayesi,
         double aylikEkGirdi,
         double toplamYatirilan,
+        double toplamReelYatirilan,
         double nominalDeger,
         double reelDeger,
         double cagr,
@@ -90,6 +91,7 @@ public class PortfolioSimulationService {
 
         // ── DCA & DRIP SIMÜLASYONU ──
         double toplamYatirilan = baslangicSermaye;
+        double toplamReelYatirilan = baslangicSermaye;
         Map<String, Double> lotlar = new HashMap<>();
         Map<String, Double> nakitler = new HashMap<>();
 
@@ -112,6 +114,10 @@ public class PortfolioSimulationService {
             if (ym.isAfter(currentMonth)) {
                 currentMonth = ym;
                 toplamYatirilan += aylikEkGirdi;
+                
+                double yil = ChronoUnit.DAYS.between(commonStart, date) / 365.25;
+                double deflator = Math.pow(1 + ANNUAL_INFLATION, yil);
+                toplamReelYatirilan += (aylikEkGirdi / deflator);
                 
                 for (String s : symbols) {
                     double ekTahsis = aylikEkGirdi * w.get(s);
@@ -165,7 +171,7 @@ public class PortfolioSimulationService {
         double reelDeger = portfoyDegeri / Math.pow(1 + ANNUAL_INFLATION, yilSayisi);
 
         return new PortfolioSonuc(
-            w, baslangicSermaye, aylikEkGirdi, toplamYatirilan, portfoyDegeri, reelDeger, 
+            w, baslangicSermaye, aylikEkGirdi, toplamYatirilan, toplamReelYatirilan, portfoyDegeri, reelDeger, 
             cagr, yilSayisi, commonStart.toString(), commonEnd.toString(), logs
         );
     }
