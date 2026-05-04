@@ -77,7 +77,6 @@ public final class YahooFinanceClient {
 
         HisseEntity hisse = new HisseEntity();
         hisse.setSembol(sembol);
-        hisse.setAd(sembol);
 
         // Map'leri başlat (null pointer almamak için)
         hisse.setGunlukKapanis(new TreeMap<>());
@@ -284,7 +283,8 @@ public final class YahooFinanceClient {
             hisse.setSonFiyat(sonFiyat);
 
             if (hisse.getDividendYield() == 0.0 && sonFiyat > 0) {
-            // API erişimi zorunludur.
+                hisse.setDividendYield(sonBirYilTemettu / sonFiyat);
+            }
 
         } catch (Exception e) {
             System.err.printf("  ⚠️  %s geçmişten rasyo hesaplama hatası: %s%n",

@@ -1,7 +1,9 @@
 package com.bist.entity;
 
 import jakarta.persistence.*;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.TreeMap;
 
 @Entity
 @Table(name = "hisseler")
@@ -26,6 +28,12 @@ public class HisseEntity {
     private String temettuGecmisiJson;
 
     private LocalDateTime sonGuncelleme;
+
+    @Transient
+    private TreeMap<LocalDate, Double> gunlukKapanis = new TreeMap<>();
+
+    @Transient
+    private TreeMap<LocalDate, Double> temettuGecmisi = new TreeMap<>();
 
     // Getters & Setters
     public String getSembol() { return sembol; }
@@ -57,4 +65,10 @@ public class HisseEntity {
 
     public LocalDateTime getSonGuncelleme() { return sonGuncelleme; }
     public void setSonGuncelleme(LocalDateTime sonGuncelleme) { this.sonGuncelleme = sonGuncelleme; }
+
+    public TreeMap<LocalDate, Double> getGunlukKapanis() { return gunlukKapanis; }
+    public void setGunlukKapanis(TreeMap<LocalDate, Double> gunlukKapanis) { this.gunlukKapanis = gunlukKapanis; }
+
+    public TreeMap<LocalDate, Double> getTemettuGecmisi() { return temettuGecmisi; }
+    public void setTemettuGecmisi(TreeMap<LocalDate, Double> temettuGecmisi) { this.temettuGecmisi = temettuGecmisi; }
 }
