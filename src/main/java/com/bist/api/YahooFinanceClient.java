@@ -14,29 +14,24 @@ import java.util.regex.*;
  * Yahoo Finance REST endpoint'leri üzerinden BIST hisse verisi çeken istemci.
  * <p>
  * v3.1: Strateji filtreleri için ek finansal rasyolar çekiliyor:
- *   F/K, PD/DD, Net Kâr Marjı, Ciro Büyümesi, Serbest Nakit Akışı,
- *   Hacim, Sektör bilgisi vb.
+ * F/K, PD/DD, Net Kâr Marjı, Ciro Büyümesi, Serbest Nakit Akışı,
+ * Hacim, Sektör bilgisi vb.
  */
 public final class YahooFinanceClient {
 
-    private static final String CHART_URL =
-        "https://query1.finance.yahoo.com/v8/finance/chart/%s"
-        + "?range=%s&interval=1d&events=div";
+    private static final String CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%s"
+            + "?range=%s&interval=1d&events=div";
 
-    private static final String SUMMARY_URL =
-        "https://query1.finance.yahoo.com/v10/finance/quoteSummary/%s"
-        + "?modules=defaultKeyStatistics,financialData,summaryDetail,summaryProfile,incomeStatementHistory"
-        + "&crumb=%s";
+    private static final String SUMMARY_URL = "https://query1.finance.yahoo.com/v10/finance/quoteSummary/%s"
+            + "?modules=defaultKeyStatistics,financialData,summaryDetail,summaryProfile,incomeStatementHistory"
+            + "&crumb=%s";
 
-    private static final String CRUMB_URL =
-        "https://query2.finance.yahoo.com/v1/test/getcrumb";
+    private static final String CRUMB_URL = "https://query2.finance.yahoo.com/v1/test/getcrumb";
 
-    private static final String CONSENT_URL =
-        "https://fc.yahoo.com/cusc/t";
+    private static final String CONSENT_URL = "https://fc.yahoo.com/cusc/t";
 
-    private static final String USER_AGENT =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        + "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+    private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            + "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
     private final HttpClient httpClient;
     private final Gson gson;
@@ -56,7 +51,7 @@ public final class YahooFinanceClient {
                 .connectTimeout(Duration.ofSeconds(15))
                 .cookieHandler(cookieManager)
                 .build();
-        this.gson  = new Gson();
+        this.gson = new Gson();
         this.range = range;
     }
 
@@ -95,7 +90,8 @@ public final class YahooFinanceClient {
     // ── Yahoo Oturum Yönetimi ────────────────────────────────────────
 
     private void oturumBaslat() throws IOException, InterruptedException {
-        if (crumb != null) return;
+        if (crumb != null)
+            return;
 
         System.out.println("  🔑  Yahoo Finance oturumu başlatılıyor...");
 
@@ -121,8 +117,8 @@ public final class YahooFinanceClient {
         String url = String.format(CHART_URL, hisse.getSembol(), range);
         String json = httpGet(url);
 
-        JsonObject root   = JsonParser.parseString(json).getAsJsonObject();
-        JsonObject chart  = root.getAsJsonObject("chart");
+        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+        JsonObject chart = root.getAsJsonObject("chart");
 
         JsonElement error = chart.get("error");
         if (error != null && !error.isJsonNull()) {
@@ -144,7 +140,8 @@ public final class YahooFinanceClient {
             volumes = indicators
                     .getAsJsonArray("quote").get(0).getAsJsonObject()
                     .getAsJsonArray("volume");
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         double totalVolume = 0;
         int volumeCount = 0;
@@ -152,7 +149,8 @@ public final class YahooFinanceClient {
         if (timestamps != null && closes != null) {
             for (int i = 0; i < timestamps.size(); i++) {
                 JsonElement closeEl = closes.get(i);
-                if (closeEl.isJsonNull()) continue;
+                if (closeEl.isJsonNull())
+                    continue;
 
                 long epoch = timestamps.get(i).getAsLong();
                 LocalDate tarih = Instant.ofEpochSecond(epoch)
@@ -188,7 +186,8 @@ public final class YahooFinanceClient {
                     hisse.setSonFiyat(marketPrice);
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         // ── Temettü olayları ──
         JsonObject events = result.getAsJsonObject("events");
@@ -196,7 +195,7 @@ public final class YahooFinanceClient {
             JsonObject divs = events.getAsJsonObject("dividends");
             for (String key : divs.keySet()) {
                 JsonObject div = divs.getAsJsonObject(key);
-                long epoch   = div.get("date").getAsLong();
+                long epoch = div.get("date").getAsLong();
                 double amount = div.get("amount").getAsDouble();
 
                 LocalDate tarih = Instant.ofEpochSecond(epoch)
@@ -215,7 +214,8 @@ public final class YahooFinanceClient {
     private void rasyolariChartMetadanCikar(HisseEntity hisse, JsonObject chartResult) {
         try {
             JsonObject meta = chartResult.getAsJsonObject("meta");
-            if (meta == null) return;
+            if (meta == null)
+                return;
 
             if (meta.has("dividendYield") && !meta.get("dividendYield").isJsonNull()) {
                 double yield = meta.get("dividendYield").getAsDouble();
@@ -223,7 +223,8 @@ public final class YahooFinanceClient {
                     hisse.setDividendYield(yield);
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
     }
 
     // ── Finansal Rasyolar (Crumb ile) — v3.1 Genişletilmiş ──────────
@@ -263,9 +264,12 @@ public final class YahooFinanceClient {
                         double payout = rawDouble(sd, "payoutRatio");
                         double trailingPE = rawDouble(sd, "trailingPE");
 
-                        if (yield > 0) hisse.setDividendYield(yield);
-                        if (payout > 0) hisse.setPayoutRatio(payout);
-                        if (trailingPE > 0) hisse.setFk(trailingPE);
+                        if (yield > 0)
+                            hisse.setDividendYield(yield);
+                        if (payout > 0)
+                            hisse.setPayoutRatio(payout);
+                        if (trailingPE > 0)
+                            hisse.setFk(trailingPE);
                     });
 
             // ── financialData: ROE, margins, revenue growth, FCF ──
@@ -279,10 +283,14 @@ public final class YahooFinanceClient {
                         double ebitda = rawDouble(fd, "ebitda");
                         double totalRevenue = rawDouble(fd, "totalRevenue");
 
-                        if (roe > 0) hisse.setRoe(roe);
-                        if (profitMargin != 0) hisse.setNetKarMarji(profitMargin);
-                        if (revenueGrowth != 0) hisse.setCiroBuyumesi(revenueGrowth);
-                        if (freeCashflow != 0) hisse.setSerbestNakitAkisi(freeCashflow);
+                        if (roe > 0)
+                            hisse.setRoe(roe);
+                        if (profitMargin != 0)
+                            hisse.setNetKarMarji(profitMargin);
+                        if (revenueGrowth != 0)
+                            hisse.setCiroBuyumesi(revenueGrowth);
+                        if (freeCashflow != 0)
+                            hisse.setSerbestNakitAkisi(freeCashflow);
 
                         // Net Borç / FAVÖK hesaplama
                         if (ebitda > 0 && totalDebt > 0) {
@@ -294,17 +302,20 @@ public final class YahooFinanceClient {
             Optional.ofNullable(result.getAsJsonObject("defaultKeyStatistics"))
                     .ifPresent(ks -> {
                         double priceToBook = rawDouble(ks, "priceToBook");
-                        if (priceToBook > 0) hisse.setPddd(priceToBook);
+                        if (priceToBook > 0)
+                            hisse.setPddd(priceToBook);
 
                         if (hisse.getPayoutRatio() == 0.0) {
                             double payout = rawDouble(ks, "payoutRatio");
-                            if (payout > 0) hisse.setPayoutRatio(payout);
+                            if (payout > 0)
+                                hisse.setPayoutRatio(payout);
                         }
 
                         // F/K fallback
                         if (hisse.getFk() == 0.0) {
                             double forwardPE = rawDouble(ks, "forwardPE");
-                            if (forwardPE > 0) hisse.setFk(forwardPE);
+                            if (forwardPE > 0)
+                                hisse.setFk(forwardPE);
                         }
                     });
 
@@ -332,7 +343,8 @@ public final class YahooFinanceClient {
             var temettuMap = hisse.getTemettuGecmisi();
             var kapanisMap = hisse.getGunlukKapanis();
 
-            if (temettuMap.isEmpty() || kapanisMap.isEmpty()) return;
+            if (temettuMap.isEmpty() || kapanisMap.isEmpty())
+                return;
 
             LocalDate birYilOnce = kapanisMap.lastKey().minusYears(1);
             double sonBirYilTemettu = temettuMap.entrySet().stream()
@@ -357,7 +369,8 @@ public final class YahooFinanceClient {
 
     private double rawDouble(JsonObject parent, String key) {
         JsonElement el = parent.get(key);
-        if (el == null || el.isJsonNull()) return 0.0;
+        if (el == null || el.isJsonNull())
+            return 0.0;
 
         if (el.isJsonObject()) {
             JsonElement raw = el.getAsJsonObject().get("raw");
@@ -379,12 +392,11 @@ public final class YahooFinanceClient {
                 .timeout(Duration.ofSeconds(30))
                 .build();
 
-        HttpResponse<String> response =
-                httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
             throw new IOException(String.format(
-                "HTTP %d — %s", response.statusCode(), url));
+                    "HTTP %d — %s", response.statusCode(), url));
         }
 
         return response.body();
@@ -402,12 +414,11 @@ public final class YahooFinanceClient {
                 .timeout(Duration.ofSeconds(15))
                 .build();
 
-        HttpResponse<String> response =
-                httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
             throw new IOException(String.format(
-                "HTTP %d — %s", response.statusCode(), url));
+                    "HTTP %d — %s", response.statusCode(), url));
         }
 
         return response.body();

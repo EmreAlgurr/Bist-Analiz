@@ -1,11 +1,71 @@
-/* ═══ BIST Analiz v3.1 — Frontend Logic ═══ */
+/* ═══ BIST Analiz v3.2 — Frontend Logic ═══ */
 
 let sessionId = null;
 let allStocks = [];
 let strategyStocks = [];
-let pollTimer = null;
 let currentSort = { col: 'dividendYield', asc: false };
 let stratSort = { col: 'skor', asc: false };
+
+/* ══════════════════════════════════════════════════════════════
+   PAGE STARTUP — Otomatik Yükleme
+   ══════════════════════════════════════════════════════════════ */
+
+(async function startup() {
+    // 1) Sync durumu & enflasyon bilgisini çek
+    try {
+        const res = await fetch('/api/sync/status');
+        const data = await res.json();
+        if (data.enflasyon) {
+            document.getElementById('enflasyonDeger').textContent =
+                '%' + (data.enflasyon * 100).toFixed(1);
+        }
+        if (data.running) {
+            updateHeaderStatus('yellow', 'Arka planda veri senkronizasyonu devam ediyor...');
+            document.getElementById('btnSync').disabled = true;
+            document.getElementById('btnSync').textContent = '⏳ Güncelleniyor...';
+            startSyncPoll();
+        }
+    } catch (e) {
+        console.log('Sync status çekilemedi:', e);
+    }
+
+    // 2) Tüm hisseleri DB'den yükle
+    await loadAllStocks();
+})();
+
+/**
+ * DB'deki tüm hisseleri tek seferde yükler ve tabloya render eder.
+ * Polling yok — veri zaten sunucu tarafında hazır.
+ */
+async function loadAllStocks() {
+    updateHeaderStatus('yellow', 'Hisseler yükleniyor...');
+
+    try {
+        // Session oluştur
+        const taraRes = await fetch('/api/tara', { method: 'POST' });
+        const taraData = await taraRes.json();
+        sessionId = taraData.sessionId;
+
+        // Hisseleri çek (anında gelir — DB query)
+        const res = await fetch('/api/tara/' + sessionId);
+        const data = await res.json();
+
+        allStocks = data.hisseler || [];
+
+        // Enflasyon güncelle
+        if (data.enflasyonOrani) {
+            document.getElementById('enflasyonDeger').textContent =
+                '%' + (data.enflasyonOrani * 100).toFixed(1);
+        }
+
+        renderTable();
+        updateHeaderStatus('green', allStocks.length + ' hisse yüklendi');
+
+    } catch (e) {
+        console.error('Hisse yükleme hatası:', e);
+        updateHeaderStatus('red', 'Hisse verileri yüklenemedi');
+    }
+}
 
 /* ══════════════════════════════════════════════════════════════
    STRATEGY LOADING
@@ -113,77 +173,19 @@ function closeStrategyResults() {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   SCAN
+   FILTER & RENDER
    ══════════════════════════════════════════════════════════════ */
 
-async function startScan() {
-    const btn = document.getElementById('btnScan');
-    btn.disabled = true;
-    btn.textContent = '⏳ Taranıyor...';
-
-    document.getElementById('progressContainer').style.display = 'block';
-    document.getElementById('resultsSection').style.display = 'block';
-    updateHeaderStatus('yellow', 'Taranıyor...');
-
-    try {
-        const res = await fetch('/api/tara', { method: 'POST' });
-        const data = await res.json();
-        sessionId = data.sessionId;
-        pollTimer = setInterval(pollStatus, 2000);
-    } catch (e) {
-        alert('Tarama başlatılamadı: ' + e.message);
-        btn.disabled = false;
-        btn.textContent = '🚀 Piyasayı Tara';
-    }
-}
-
-async function pollStatus() {
-    if (!sessionId) return;
-    try {
-        const res = await fetch('/api/tara/' + sessionId);
-        const data = await res.json();
-
-        const pct = data.toplam > 0 ? (data.tamamlanan / data.toplam * 100) : 0;
-        document.getElementById('progressFill').style.width = pct + '%';
-        document.getElementById('progressText').textContent =
-            data.durum === 'TAMAMLANDI' ? '✅ Tarama tamamlandı!' : '⏳ Taranıyor...';
-        document.getElementById('progressCount').textContent =
-            data.tamamlanan + ' / ' + data.toplam;
-
-        allStocks = data.hisseler || [];
-        renderTable();
-
-        // Enflasyon güncelle
-        if (data.enflasyonOrani) {
-            document.getElementById('enflasyonDeger').textContent =
-                '%' + (data.enflasyonOrani * 100).toFixed(1);
-        }
-
-        // Sync durumu
-        if (data.syncRunning) {
-            updateHeaderStatus('yellow', 'Arka planda veri senkronizasyonu devam ediyor...');
-        }
-
-        if (data.durum === 'TAMAMLANDI') {
-            clearInterval(pollTimer);
-            document.getElementById('btnScan').disabled = false;
-            document.getElementById('btnScan').textContent = '🚀 Piyasayı Tara';
-            if (!data.syncRunning) {
-                updateHeaderStatus('green', data.hisseler.length + ' hisse yüklendi');
-            }
-        }
-    } catch (e) {
-        console.error('Poll hatası:', e);
-    }
-}
-
-/* ── Filter & Render ── */
 function getFilters() {
     return {
         minYield: parseFloat(document.getElementById('minYield').value) / 100 || 0,
         minRoe: parseFloat(document.getElementById('minRoe').value) / 100 || 0,
         minPayout: parseFloat(document.getElementById('minPayout').value) / 100 || 0,
         maxPayout: parseFloat(document.getElementById('maxPayout').value) / 100 || 10,
+        maxFk: parseFloat(document.getElementById('maxFk').value) || 1000,
+        minNetKarMarji: parseFloat(document.getElementById('minNetKarMarji').value) / 100 || -1,
+        minCiroBuyumesi: parseFloat(document.getElementById('minCiroBuyumesi').value) / 100 || -1,
+        maxBorcFavoek: parseFloat(document.getElementById('maxBorcFavoek').value) || 100,
         search: document.getElementById('searchBox').value.toUpperCase().trim()
     };
 }
@@ -195,7 +197,11 @@ function filterStocks(stocks) {
         if (h.dividendYield < f.minYield) return false;
         if (h.roe < f.minRoe) return false;
         if (h.payoutRatio < f.minPayout) return false;
-        if (h.payoutRatio > f.maxPayout) return false;
+        if (f.maxPayout < 1.0 && h.payoutRatio > f.maxPayout) return false;
+        if (h.fk > f.maxFk && h.fk !== 0) return false; // F/K 0 means N/A, we usually let it pass or not? Let's say if fk > maxFk we hide.
+        if (h.netKarMarji < f.minNetKarMarji) return false;
+        if (h.ciroBuyumesi < f.minCiroBuyumesi) return false;
+        if (h.netBorcFavoek > f.maxBorcFavoek && h.netBorcFavoek !== 0) return false;
         return true;
     });
 }
@@ -326,7 +332,7 @@ function buildDripHTML(d) {
    ══════════════════════════════════════════════════════════════ */
 
 async function triggerSync() {
-    if (!confirm('Tüm BIST hisselerini Yahoo Finance\'den güncellemek uzun sürebilir (~10 dk). Devam?')) return;
+    if (!confirm('Tüm BIST hisselerini Yahoo Finance\'den güncellemek uzun sürebilir (~5 dk). Devam?')) return;
     
     const btn = document.getElementById('btnSync');
     btn.disabled = true;
@@ -338,7 +344,6 @@ async function triggerSync() {
         const data = await res.json();
         alert(data.mesaj);
         updateHeaderStatus('yellow', 'Arka planda güncelleme devam ediyor');
-        // Sync durumunu takip et
         startSyncPoll();
     } catch (e) {
         alert('Senkronizasyon hatası: ' + e.message);
@@ -369,6 +374,8 @@ function startSyncPoll() {
                 document.getElementById('btnSync').disabled = false;
                 document.getElementById('btnSync').textContent = '🔄 Verileri Güncelle';
                 updateHeaderStatus('green', '✅ Veriler güncellendi — ' + (data.progress || ''));
+                // Tabloyu yenile
+                await loadAllStocks();
             }
         } catch (e) {
             clearInterval(syncPoll);
@@ -393,25 +400,7 @@ function updateHeaderStatus(color, text) {
         `<div class="stat-chip"><span class="dot ${color}"></span> ${text}</div>`;
 }
 
-// ── Startup: Enflasyon ve sync durumunu çek ──
-(async function() {
-    try {
-        const res = await fetch('/api/sync/status');
-        const data = await res.json();
-        if (data.enflasyon) {
-            document.getElementById('enflasyonDeger').textContent =
-                '%' + (data.enflasyon * 100).toFixed(1);
-        }
-        if (data.running) {
-            updateHeaderStatus('yellow', 'Arka planda veri senkronizasyonu devam ediyor...');
-            document.getElementById('btnSync').disabled = true;
-            document.getElementById('btnSync').textContent = '⏳ Güncelleniyor...';
-            startSyncPoll();
-        }
-    } catch (e) { console.log('Sync status çekilemedi'); }
-})();
-
-/* ── Live Filter Listeners ── */
-['minYield','minRoe','minPayout','maxPayout','searchBox'].forEach(id => {
+/* ── Live Filter Listeners — her değişiklikte tabloyu yeniden filtrele ── */
+['minYield','minRoe','minPayout','maxPayout','maxFk','minNetKarMarji','minCiroBuyumesi','maxBorcFavoek','searchBox'].forEach(id => {
     document.getElementById(id).addEventListener('input', () => { if (allStocks.length) renderTable(); });
 });

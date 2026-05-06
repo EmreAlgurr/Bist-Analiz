@@ -32,7 +32,7 @@ public class HisseController {
     }
 
     @GetMapping("/tara/{id}")
-    public ResponseEntity<HisseService.TaramaDurum> taramaDurumu(@PathVariable String id) {
+    public ResponseEntity<HisseService.TaramaDurum> taramaDurumu(@PathVariable("id") String id) {
         var durum = service.taramaDurumu(id);
         if (durum == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(durum);
