@@ -31,6 +31,7 @@ public class TcmbEvdsClient {
 
     public TcmbEvdsClient() {
         this.httpClient = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
             .connectTimeout(Duration.ofSeconds(10))
             .build();
     }
