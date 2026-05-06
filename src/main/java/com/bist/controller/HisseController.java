@@ -1,11 +1,12 @@
 package com.bist.controller;
 
 import com.bist.service.HisseService;
-import com.bist.service.PortfolioSimulationService;
+import com.bist.service.StrategyScreenerService;
+import com.bist.service.SyncService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 
 @RestController
@@ -13,11 +14,15 @@ import java.util.Map;
 public class HisseController {
 
     private final HisseService service;
-    private final PortfolioSimulationService portfolioService;
+    private final StrategyScreenerService strategyService;
+    private final SyncService syncService;
 
-    public HisseController(HisseService service, PortfolioSimulationService portfolioService) {
+    public HisseController(HisseService service,
+                           StrategyScreenerService strategyService,
+                           SyncService syncService) {
         this.service = service;
-        this.portfolioService = portfolioService;
+        this.strategyService = strategyService;
+        this.syncService = syncService;
     }
 
     @PostMapping("/tara")
@@ -50,23 +55,34 @@ public class HisseController {
         return ResponseEntity.ok(sonuc);
     }
 
-    @PostMapping("/portfolio")
-    public ResponseEntity<PortfolioSimulationService.PortfolioSonuc> portfolioSimulasyonu(
-            @RequestBody Map<String, Object> body) {
-        @SuppressWarnings("unchecked")
-        List<String> semboller = (List<String>) body.get("semboller");
-        double sermaye = body.containsKey("sermaye")
-                ? ((Number) body.get("sermaye")).doubleValue()
-                : 80000.0;
-        double aylikEkGirdi = body.containsKey("aylikEkGirdi")
-                ? ((Number) body.get("aylikEkGirdi")).doubleValue()
-                : 0.0;
+    // ── Strateji Endpoint'leri ────────────────────────────────
 
-        try {
-            var sonuc = portfolioService.simulatePortfolio(semboller, sermaye, aylikEkGirdi);
-            return ResponseEntity.ok(sonuc);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().build();
-        }
+    @GetMapping("/strateji/temettu-devleri")
+    public ResponseEntity<StrategyScreenerService.StrategyResult> temettuDevleri() {
+        var result = strategyService.temettuDevleri();
+        return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/strateji/agresif-buyume")
+    public ResponseEntity<StrategyScreenerService.StrategyResult> agresifBuyume() {
+        var result = strategyService.agresifBuyume();
+        return ResponseEntity.ok(result);
+    }
+
+    // ── Senkronizasyon Endpoint'leri ─────────────────────────
+
+    @PostMapping("/sync")
+    public Map<String, String> manuelSync() {
+        String mesaj = syncService.manuelSenkronizasyon();
+        return Map.of("mesaj", mesaj);
+    }
+
+    @GetMapping("/sync/status")
+    public Map<String, Object> syncStatus() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("running", syncService.isSyncRunning());
+        result.put("enflasyon", syncService.getGuncelEnflasyon());
+        result.put("progress", syncService.getSyncProgress());
+        return result;
     }
 }

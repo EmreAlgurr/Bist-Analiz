@@ -1,11 +1,121 @@
-/* ═══ BIST Analiz v2.0 — Frontend Logic ═══ */
+/* ═══ BIST Analiz v3.1 — Frontend Logic ═══ */
 
 let sessionId = null;
 let allStocks = [];
+let strategyStocks = [];
 let pollTimer = null;
 let currentSort = { col: 'dividendYield', asc: false };
+let stratSort = { col: 'skor', asc: false };
 
-/* ── Scan ── */
+/* ══════════════════════════════════════════════════════════════
+   STRATEGY LOADING
+   ══════════════════════════════════════════════════════════════ */
+
+async function loadStrategy(type) {
+    const btn = type === 'temettu-devleri'
+        ? document.getElementById('btnTemettuDevleri')
+        : document.getElementById('btnAgresifBuyume');
+
+    btn.classList.add('loading');
+    updateHeaderStatus('yellow', 'Strateji analizi yapılıyor...');
+
+    try {
+        const res = await fetch('/api/strateji/' + type);
+        if (!res.ok) throw new Error('Strateji API hatası: ' + res.status);
+        const data = await res.json();
+
+        strategyStocks = data.hisseler || [];
+        renderStrategyResults(data);
+        updateHeaderStatus('green', data.filtrelenen + ' hisse filtrelendi (' + data.stratejiAdi + ')');
+    } catch (e) {
+        alert('Strateji yüklenemedi: ' + e.message);
+        updateHeaderStatus('red', 'Hata!');
+    } finally {
+        btn.classList.remove('loading');
+    }
+}
+
+function renderStrategyResults(data) {
+    const section = document.getElementById('strategyResults');
+    section.style.display = 'block';
+
+    document.getElementById('strategyTitle').textContent =
+        (data.stratejiAdi === 'Temettü Devleri' ? '⭐' : '🚀') + ' ' + data.stratejiAdi + ' Sonuçları';
+    document.getElementById('strategyDesc').textContent = data.stratejiAciklama;
+    document.getElementById('stratFilteredCount').textContent = data.filtrelenen + ' hisse';
+    document.getElementById('stratTotalCount').textContent = '/ ' + data.toplamTaranan + ' taranan';
+
+    // Sektör istatistikleri
+    if (data.sektorIstatistikleri && Object.keys(data.sektorIstatistikleri).length > 0) {
+        document.getElementById('sectorStats').style.display = 'block';
+        const chips = document.getElementById('sectorChips');
+        chips.innerHTML = Object.values(data.sektorIstatistikleri)
+            .filter(s => s.hisseSayisi > 1)
+            .sort((a, b) => b.hisseSayisi - a.hisseSayisi)
+            .slice(0, 12)
+            .map(s => `
+                <div class="sector-chip">
+                    <span class="sector-name">${s.sektor}</span>
+                    <span class="sector-detail">F/K: ${s.ortFk.toFixed(1)} · ROE: ${(s.ortRoe*100).toFixed(0)}% · ${s.hisseSayisi} hisse</span>
+                </div>
+            `).join('');
+    } else {
+        document.getElementById('sectorStats').style.display = 'none';
+    }
+
+    renderStrategyTable();
+    section.scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderStrategyTable() {
+    const sorted = [...strategyStocks].sort((a, b) => {
+        let va = a[stratSort.col], vb = b[stratSort.col];
+        if (typeof va === 'string') return stratSort.asc ? va.localeCompare(vb) : vb.localeCompare(va);
+        return stratSort.asc ? va - vb : vb - va;
+    });
+
+    const tbody = document.getElementById('strategyTableBody');
+    tbody.innerHTML = sorted.map(h => {
+        const skorClass = h.skor >= 70 ? 'skor-high' : h.skor >= 40 ? 'skor-mid' : 'skor-low';
+        const zLabel = h.fkZScore < 0
+            ? `<span class="val-positive" title="Sektöre göre ucuz">F/K: ${h.fkZScore.toFixed(1)}σ</span>`
+            : `<span class="val-negative" title="Sektöre göre pahalı">F/K: +${h.fkZScore.toFixed(1)}σ</span>`;
+        const roeZLabel = h.roeZScore > 0
+            ? `<span class="val-positive" title="Sektöre göre verimli">ROE: +${h.roeZScore.toFixed(1)}σ</span>`
+            : `<span class="val-neutral">ROE: ${h.roeZScore.toFixed(1)}σ</span>`;
+
+        return `
+        <tr>
+            <td><span class="skor-badge ${skorClass}">${h.skor.toFixed(0)}</span></td>
+            <td class="symbol-cell">${h.sembol.replace('.IS','')}</td>
+            <td class="sector-cell">${h.sektor}</td>
+            <td>${fmtPrice(h.sonFiyat)}</td>
+            <td class="${valClass(h.dividendYield, 0.03)}">${fmtPct(h.dividendYield)}</td>
+            <td class="${valClass(h.roe, 0.15)}">${fmtPct(h.roe)}</td>
+            <td class="val-neutral">${h.fk > 0 ? h.fk.toFixed(1) : '-'}</td>
+            <td class="${valClass(h.ciroBuyumesi, 0.20)}">${fmtPct(h.ciroBuyumesi)}</td>
+            <td class="${h.netKarMarji >= 0.10 ? 'val-positive' : h.netKarMarji > 0 ? 'val-neutral' : 'val-negative'}">${fmtPct(h.netKarMarji)}</td>
+            <td class="${h.netBorcFavoek < 2.5 ? 'val-positive' : 'val-negative'}">${h.netBorcFavoek > 0 ? h.netBorcFavoek.toFixed(1) + 'x' : '-'}</td>
+            <td class="zscore-cell">${zLabel} ${roeZLabel}</td>
+            <td><button class="btn-drip" onclick="openDrip('${h.sembol}')">💰 DRIP</button></td>
+        </tr>`;
+    }).join('');
+}
+
+function sortStratTable(col) {
+    if (stratSort.col === col) stratSort.asc = !stratSort.asc;
+    else { stratSort.col = col; stratSort.asc = false; }
+    renderStrategyTable();
+}
+
+function closeStrategyResults() {
+    document.getElementById('strategyResults').style.display = 'none';
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SCAN
+   ══════════════════════════════════════════════════════════════ */
+
 async function startScan() {
     const btn = document.getElementById('btnScan');
     btn.disabled = true;
@@ -43,11 +153,24 @@ async function pollStatus() {
         allStocks = data.hisseler || [];
         renderTable();
 
+        // Enflasyon güncelle
+        if (data.enflasyonOrani) {
+            document.getElementById('enflasyonDeger').textContent =
+                '%' + (data.enflasyonOrani * 100).toFixed(1);
+        }
+
+        // Sync durumu
+        if (data.syncRunning) {
+            updateHeaderStatus('yellow', 'Arka planda veri senkronizasyonu devam ediyor...');
+        }
+
         if (data.durum === 'TAMAMLANDI') {
             clearInterval(pollTimer);
             document.getElementById('btnScan').disabled = false;
             document.getElementById('btnScan').textContent = '🚀 Piyasayı Tara';
-            updateHeaderStatus('green', data.hisseler.length + ' hisse yüklendi');
+            if (!data.syncRunning) {
+                updateHeaderStatus('green', data.hisseler.length + ' hisse yüklendi');
+            }
         }
     } catch (e) {
         console.error('Poll hatası:', e);
@@ -80,7 +203,6 @@ function filterStocks(stocks) {
 function renderTable() {
     const filtered = filterStocks(allStocks);
 
-    // Sort
     filtered.sort((a, b) => {
         let va = a[currentSort.col], vb = b[currentSort.col];
         if (typeof va === 'string') return currentSort.asc ? va.localeCompare(vb) : vb.localeCompare(va);
@@ -93,12 +215,13 @@ function renderTable() {
     const tbody = document.getElementById('stockTableBody');
     tbody.innerHTML = filtered.map(h => `
         <tr>
-            <td><input type="checkbox" class="stock-checkbox" value="${h.sembol}"></td>
             <td>${h.sembol.replace('.IS','')}</td>
+            <td class="sector-cell">${h.sektor || '-'}</td>
             <td>${fmtPrice(h.sonFiyat)}</td>
             <td class="${valClass(h.dividendYield, 0.03)}">${fmtPct(h.dividendYield)}</td>
             <td class="${valClass(h.roe, 0.15)}">${fmtPct(h.roe)}</td>
             <td class="${payoutClass(h.payoutRatio)}">${fmtPct(h.payoutRatio)}</td>
+            <td class="val-neutral">${h.fk > 0 ? h.fk.toFixed(1) : '-'}</td>
             <td class="val-neutral">${h.temettuSayisi}</td>
             <td><button class="btn-drip" onclick="openDrip('${h.sembol}')">💰 DRIP</button></td>
         </tr>
@@ -111,13 +234,10 @@ function sortTable(col) {
     renderTable();
 }
 
-/* ── Selection ── */
-function toggleSelectAll() {
-    const isChecked = document.getElementById('selectAll').checked;
-    document.querySelectorAll('.stock-checkbox').forEach(cb => cb.checked = isChecked);
-}
+/* ══════════════════════════════════════════════════════════════
+   DRIP MODAL
+   ══════════════════════════════════════════════════════════════ */
 
-/* ── DRIP Modal ── */
 async function openDrip(sembol) {
     const modal = document.getElementById('dripModal');
     const body = document.getElementById('dripModalBody');
@@ -143,6 +263,10 @@ async function openDrip(sembol) {
 function buildDripHTML(d) {
     const cagrClass = d.cagr >= 0 ? 'val-positive' : 'val-negative';
     const getiriClass = d.toplamGetiri >= 0 ? 'val-positive' : 'val-negative';
+    const enflasyonLabel = d.kullanilanEnflasyon
+        ? `(TCMB TÜFE: %${(d.kullanilanEnflasyon * 100).toFixed(1)})`
+        : '';
+
     let eventsHTML = '';
     if (d.olaylar && d.olaylar.length > 0) {
         eventsHTML = `
@@ -170,7 +294,7 @@ function buildDripHTML(d) {
                 <div class="metric-value">${fmtMoney(d.toplamYatirilan)}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">Reel Maliyet</div>
+                <div class="metric-label">Reel Maliyet ${enflasyonLabel}</div>
                 <div class="metric-value val-neutral">${fmtMoney(d.toplamReelYatirilan)}</div>
             </div>
             <div class="metric-card">
@@ -182,7 +306,7 @@ function buildDripHTML(d) {
                 <div class="metric-value big ${getiriClass}">${fmtMoney(d.portfoyDegeri)}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">Reel Değer (Enfl. Düzeltilmiş)</div>
+                <div class="metric-label">Reel Değer ${enflasyonLabel}</div>
                 <div class="metric-value big val-neutral">${fmtMoney(d.reelDeger)}</div>
             </div>
             <div class="metric-card">
@@ -197,81 +321,68 @@ function buildDripHTML(d) {
         ${eventsHTML}`;
 }
 
-/* ── Portfolio Optimization ── */
-async function optimizePortfolio() {
-    const checkboxes = document.querySelectorAll('.stock-checkbox:checked');
-    const symbols = Array.from(checkboxes).map(cb => cb.value);
-    
-    if (symbols.length < 2 || symbols.length > 10) {
-        alert("Lütfen portföy optimizasyonu için en az 2, en fazla 10 hisse seçin.");
-        return;
-    }
+/* ══════════════════════════════════════════════════════════════
+   SYNC
+   ══════════════════════════════════════════════════════════════ */
 
-    const modal = document.getElementById('dripModal');
-    const body = document.getElementById('dripModalBody');
-    const sermaye = parseFloat(document.getElementById('baslangicSermaye').value) || 0;
-    const aylik = parseFloat(document.getElementById('aylikEkGirdi').value) || 0;
+async function triggerSync() {
+    if (!confirm('Tüm BIST hisselerini Yahoo Finance\'den güncellemek uzun sürebilir (~10 dk). Devam?')) return;
     
-    modal.style.display = 'flex';
-    body.innerHTML = '<div class="modal-loading"><div class="spinner"></div><p>Markowitz Portföy Optimizasyonu yapılıyor...</p></div>';
+    const btn = document.getElementById('btnSync');
+    btn.disabled = true;
+    btn.textContent = '⏳ Güncelleniyor...';
+    updateHeaderStatus('yellow', 'Veri güncelleme başlatıldı...');
 
     try {
-        const res = await fetch('/api/portfolio', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ semboller: symbols, sermaye: sermaye, aylikEkGirdi: aylik })
-        });
-        if (!res.ok) throw new Error("Optimizasyon başarısız oldu.");
-        const d = await res.json();
-        body.innerHTML = buildPortfolioHTML(d);
+        const res = await fetch('/api/sync', { method: 'POST' });
+        const data = await res.json();
+        alert(data.mesaj);
+        updateHeaderStatus('yellow', 'Arka planda güncelleme devam ediyor');
+        // Sync durumunu takip et
+        startSyncPoll();
     } catch (e) {
-        body.innerHTML = '<p style="color:var(--red);text-align:center;">Hata: ' + e.message + '</p>';
+        alert('Senkronizasyon hatası: ' + e.message);
+        btn.disabled = false;
+        btn.textContent = '🔄 Verileri Güncelle';
     }
 }
 
-function buildPortfolioHTML(d) {
-    const cagrClass = d.cagr >= 0 ? 'val-positive' : 'val-negative';
-    
-    let weightsHTML = Object.entries(d.agirliklar)
-        .sort((a,b) => b[1] - a[1])
-        .filter(w => w[1] > 0.01)
-        .map(w => `<span class="badge" style="margin:2px;">${w[0].replace('.IS','')}: ${(w[1]*100).toFixed(1)}%</span>`)
-        .join('');
+function startSyncPoll() {
+    const syncPoll = setInterval(async () => {
+        try {
+            const res = await fetch('/api/sync/status');
+            const data = await res.json();
+            
+            if (data.enflasyon) {
+                document.getElementById('enflasyonDeger').textContent =
+                    '%' + (data.enflasyon * 100).toFixed(1);
+            }
 
-    return `
-        <div class="drip-header">
-            <h3>📦 Optimal Sepet (Markowitz)</h3>
-            <div class="drip-subtitle">${d.baslangicTarihi} → ${d.bitisTarihi} (${d.yilSayisi.toFixed(1)} yıl)</div>
-            <div style="margin-top:10px;">${weightsHTML}</div>
-        </div>
-        <div class="drip-metrics">
-            <div class="metric-card">
-                <div class="metric-label">Nominal Yatırılan</div>
-                <div class="metric-value">${fmtMoney(d.toplamYatirilan)}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Reel Maliyet</div>
-                <div class="metric-value val-neutral">${fmtMoney(d.toplamReelYatirilan)}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Nominal Bakiye</div>
-                <div class="metric-value big val-positive">${fmtMoney(d.nominalDeger)}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Reel Bakiye</div>
-                <div class="metric-value big val-neutral">${fmtMoney(d.reelDeger)}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Bileşik Getiri (CAGR)</div>
-                <div class="metric-value big ${cagrClass}">${(d.cagr*100).toFixed(2)}%</div>
-            </div>
-        </div>`;
+            // Progress göster
+            if (data.progress && data.running) {
+                updateHeaderStatus('yellow', '🔄 ' + data.progress);
+                document.getElementById('btnSync').textContent = '⏳ ' + data.progress;
+            }
+            
+            if (!data.running) {
+                clearInterval(syncPoll);
+                document.getElementById('btnSync').disabled = false;
+                document.getElementById('btnSync').textContent = '🔄 Verileri Güncelle';
+                updateHeaderStatus('green', '✅ Veriler güncellendi — ' + (data.progress || ''));
+            }
+        } catch (e) {
+            clearInterval(syncPoll);
+        }
+    }, 5000);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   HELPERS
+   ══════════════════════════════════════════════════════════════ */
 
 function closeModal(e) { if (e.target === document.getElementById('dripModal')) closeDripModal(); }
 function closeDripModal() { document.getElementById('dripModal').style.display = 'none'; }
 
-/* ── Helpers ── */
 function fmtPct(v) { return (v * 100).toFixed(2) + '%'; }
 function fmtPrice(v) { return v.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺'; }
 function fmtMoney(v) { return v.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' TL'; }
@@ -281,6 +392,24 @@ function updateHeaderStatus(color, text) {
     document.getElementById('headerStats').innerHTML =
         `<div class="stat-chip"><span class="dot ${color}"></span> ${text}</div>`;
 }
+
+// ── Startup: Enflasyon ve sync durumunu çek ──
+(async function() {
+    try {
+        const res = await fetch('/api/sync/status');
+        const data = await res.json();
+        if (data.enflasyon) {
+            document.getElementById('enflasyonDeger').textContent =
+                '%' + (data.enflasyon * 100).toFixed(1);
+        }
+        if (data.running) {
+            updateHeaderStatus('yellow', 'Arka planda veri senkronizasyonu devam ediyor...');
+            document.getElementById('btnSync').disabled = true;
+            document.getElementById('btnSync').textContent = '⏳ Güncelleniyor...';
+            startSyncPoll();
+        }
+    } catch (e) { console.log('Sync status çekilemedi'); }
+})();
 
 /* ── Live Filter Listeners ── */
 ['minYield','minRoe','minPayout','maxPayout','searchBox'].forEach(id => {

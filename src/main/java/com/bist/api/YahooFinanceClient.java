@@ -13,27 +13,19 @@ import java.util.regex.*;
 /**
  * Yahoo Finance REST endpoint'leri üzerinden BIST hisse verisi çeken istemci.
  * <p>
- * Kullanılan endpoint'ler:
- * <ul>
- *   <li><b>v8/finance/chart</b>  — Geçmiş kapanış fiyatları + temettü olayları</li>
- *   <li><b>v10/finance/quoteSummary</b> — Güncel finansal rasyolar (crumb ile)</li>
- * </ul>
- *
- * Yahoo Finance, quoteSummary için cookie + crumb doğrulaması gerektirir.
- * Bu sınıf oturumu otomatik olarak yönetir.
- *
- * Thread-safe: İç HttpClient paylaşılır, HisseEntity nesneleri çağrı başına üretilir.
+ * v3.1: Strateji filtreleri için ek finansal rasyolar çekiliyor:
+ *   F/K, PD/DD, Net Kâr Marjı, Ciro Büyümesi, Serbest Nakit Akışı,
+ *   Hacim, Sektör bilgisi vb.
  */
 public final class YahooFinanceClient {
 
-    // ... (sabitler ve diğer alanlar aynı kalacak) ...
     private static final String CHART_URL =
         "https://query1.finance.yahoo.com/v8/finance/chart/%s"
         + "?range=%s&interval=1d&events=div";
 
     private static final String SUMMARY_URL =
         "https://query1.finance.yahoo.com/v10/finance/quoteSummary/%s"
-        + "?modules=defaultKeyStatistics,financialData,summaryDetail"
+        + "?modules=defaultKeyStatistics,financialData,summaryDetail,summaryProfile,incomeStatementHistory"
         + "&crumb=%s";
 
     private static final String CRUMB_URL =
@@ -85,40 +77,34 @@ public final class YahooFinanceClient {
         // 1) Geçmiş fiyatlar ve temettüler
         gecmisFiyatVeTemettuCek(hisse);
 
-        // 2) Finansal rasyolar (crumb ile)
+        // 2) Finansal rasyolar (crumb ile) — v3.1 genişletilmiş
         rasyolariCek(hisse);
 
-        System.out.printf("  ✅  %s — %d gün kapanış, %d temettü kaydı, yield=%.2f%%, roe=%.2f%%, payout=%.2f%%%n",
+        System.out.printf("  ✅  %s — %d gün, %d temettü, yield=%.2f%%, roe=%.2f%%, fk=%.1f, sektor=%s%n",
                 sembol,
                 hisse.getGunlukKapanis().size(),
                 hisse.getTemettuGecmisi().size(),
                 hisse.getDividendYield() * 100,
                 hisse.getRoe() * 100,
-                hisse.getPayoutRatio() * 100);
+                hisse.getFk(),
+                hisse.getSektor() != null ? hisse.getSektor() : "N/A");
 
         return hisse;
     }
 
     // ── Yahoo Oturum Yönetimi ────────────────────────────────────────
 
-    /**
-     * Yahoo Finance'in crumb mekanizmasını başlatır.
-     * 1) Consent sayfasına istek atarak oturum cookie'si alır.
-     * 2) Crumb endpoint'inden crumb token'ı çeker.
-     */
     private void oturumBaslat() throws IOException, InterruptedException {
-        if (crumb != null) return; // Zaten oturum açık
+        if (crumb != null) return;
 
         System.out.println("  🔑  Yahoo Finance oturumu başlatılıyor...");
 
-        // Adım 1: Consent sayfasına GET — cookie al
         try {
             httpGetRaw(CONSENT_URL);
         } catch (IOException e) {
             // 404 dönebilir, sorun yok — cookie alınmış olur
         }
 
-        // Adım 2: Crumb al
         String crumbResponse = httpGetRaw(CRUMB_URL);
         if (crumbResponse == null || crumbResponse.isBlank()) {
             System.err.println("  ⚠️  Crumb alınamadı, rasyolar çekilemeyebilir.");
@@ -138,7 +124,6 @@ public final class YahooFinanceClient {
         JsonObject root   = JsonParser.parseString(json).getAsJsonObject();
         JsonObject chart  = root.getAsJsonObject("chart");
 
-        // Hata kontrolü
         JsonElement error = chart.get("error");
         if (error != null && !error.isJsonNull()) {
             throw new IOException("Yahoo Finance hata döndürdü: " + error);
@@ -153,6 +138,17 @@ public final class YahooFinanceClient {
                 .getAsJsonArray("quote").get(0).getAsJsonObject()
                 .getAsJsonArray("close");
 
+        // ── Hacim verileri (günlük ortalama hacim hesabı için) ──
+        JsonArray volumes = null;
+        try {
+            volumes = indicators
+                    .getAsJsonArray("quote").get(0).getAsJsonObject()
+                    .getAsJsonArray("volume");
+        } catch (Exception ignored) {}
+
+        double totalVolume = 0;
+        int volumeCount = 0;
+
         if (timestamps != null && closes != null) {
             for (int i = 0; i < timestamps.size(); i++) {
                 JsonElement closeEl = closes.get(i);
@@ -164,8 +160,35 @@ public final class YahooFinanceClient {
                         .toLocalDate();
                 double fiyat = closeEl.getAsDouble();
                 hisse.getGunlukKapanis().put(tarih, fiyat);
+
+                // Hacim toplama (son 30 gün benzeri yaklaşım)
+                if (volumes != null && i < volumes.size() && !volumes.get(i).isJsonNull()) {
+                    totalVolume += volumes.get(i).getAsDouble() * fiyat;
+                    volumeCount++;
+                }
             }
         }
+
+        // Günlük ortalama hacim (TL cinsinden)
+        if (volumeCount > 0) {
+            hisse.setGunlukOrtHacim(totalVolume / volumeCount);
+        }
+
+        // ── Son Fiyat: Her zaman kapanış verisinden set et ──
+        if (!hisse.getGunlukKapanis().isEmpty()) {
+            hisse.setSonFiyat(hisse.getGunlukKapanis().lastEntry().getValue());
+        }
+
+        // Chart meta'dan anlık fiyatı almayı dene (daha güncel olabilir)
+        try {
+            JsonObject meta = result.getAsJsonObject("meta");
+            if (meta != null && meta.has("regularMarketPrice") && !meta.get("regularMarketPrice").isJsonNull()) {
+                double marketPrice = meta.get("regularMarketPrice").getAsDouble();
+                if (marketPrice > 0) {
+                    hisse.setSonFiyat(marketPrice);
+                }
+            }
+        } catch (Exception ignored) {}
 
         // ── Temettü olayları ──
         JsonObject events = result.getAsJsonObject("events");
@@ -203,7 +226,7 @@ public final class YahooFinanceClient {
         } catch (Exception ignored) {}
     }
 
-    // ── Finansal Rasyolar (Crumb ile) ────────────────────────────────
+    // ── Finansal Rasyolar (Crumb ile) — v3.1 Genişletilmiş ──────────
 
     private void rasyolariCek(HisseEntity hisse) throws IOException, InterruptedException {
         try {
@@ -233,25 +256,63 @@ public final class YahooFinanceClient {
 
             JsonObject result = resultArr.get(0).getAsJsonObject();
 
+            // ── summaryDetail: yield, payout, F/K ──
             Optional.ofNullable(result.getAsJsonObject("summaryDetail"))
                     .ifPresent(sd -> {
                         double yield = rawDouble(sd, "dividendYield");
                         double payout = rawDouble(sd, "payoutRatio");
+                        double trailingPE = rawDouble(sd, "trailingPE");
+
                         if (yield > 0) hisse.setDividendYield(yield);
                         if (payout > 0) hisse.setPayoutRatio(payout);
+                        if (trailingPE > 0) hisse.setFk(trailingPE);
                     });
 
+            // ── financialData: ROE, margins, revenue growth, FCF ──
             Optional.ofNullable(result.getAsJsonObject("financialData"))
                     .ifPresent(fd -> {
                         double roe = rawDouble(fd, "returnOnEquity");
+                        double profitMargin = rawDouble(fd, "profitMargins");
+                        double revenueGrowth = rawDouble(fd, "revenueGrowth");
+                        double freeCashflow = rawDouble(fd, "freeCashflow");
+                        double totalDebt = rawDouble(fd, "totalDebt");
+                        double ebitda = rawDouble(fd, "ebitda");
+                        double totalRevenue = rawDouble(fd, "totalRevenue");
+
                         if (roe > 0) hisse.setRoe(roe);
+                        if (profitMargin != 0) hisse.setNetKarMarji(profitMargin);
+                        if (revenueGrowth != 0) hisse.setCiroBuyumesi(revenueGrowth);
+                        if (freeCashflow != 0) hisse.setSerbestNakitAkisi(freeCashflow);
+
+                        // Net Borç / FAVÖK hesaplama
+                        if (ebitda > 0 && totalDebt > 0) {
+                            hisse.setNetBorcFavoek(totalDebt / ebitda);
+                        }
                     });
 
+            // ── defaultKeyStatistics: PD/DD, payout fallback ──
             Optional.ofNullable(result.getAsJsonObject("defaultKeyStatistics"))
                     .ifPresent(ks -> {
+                        double priceToBook = rawDouble(ks, "priceToBook");
+                        if (priceToBook > 0) hisse.setPddd(priceToBook);
+
                         if (hisse.getPayoutRatio() == 0.0) {
                             double payout = rawDouble(ks, "payoutRatio");
                             if (payout > 0) hisse.setPayoutRatio(payout);
+                        }
+
+                        // F/K fallback
+                        if (hisse.getFk() == 0.0) {
+                            double forwardPE = rawDouble(ks, "forwardPE");
+                            if (forwardPE > 0) hisse.setFk(forwardPE);
+                        }
+                    });
+
+            // ── summaryProfile: Sektör ──
+            Optional.ofNullable(result.getAsJsonObject("summaryProfile"))
+                    .ifPresent(sp -> {
+                        if (sp.has("sector") && !sp.get("sector").isJsonNull()) {
+                            hisse.setSektor(sp.get("sector").getAsString());
                         }
                     });
 
@@ -294,10 +355,6 @@ public final class YahooFinanceClient {
 
     // ── Yardımcılar ──────────────────────────────────────────────────
 
-    /**
-     * Yahoo Finance JSON yapısında sayısal değerler bazen
-     * {@code {"raw": 0.05, "fmt": "5.00%"}} biçiminde gelir.
-     */
     private double rawDouble(JsonObject parent, String key) {
         JsonElement el = parent.get(key);
         if (el == null || el.isJsonNull()) return 0.0;

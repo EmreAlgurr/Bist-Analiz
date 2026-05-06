@@ -13,30 +13,38 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 /**
- * Hızlı Screener Servisi (v3.0)
+ * Hızlı Screener Servisi (v3.1)
  * Artık dış HTTP çağrıları yapmaz, doğrudan SQLite (Repository) üzerinden
  * anlık sonuç döner.
+ *
+ * DRIP simülasyonunda TCMB'den çekilen gerçek enflasyon oranı kullanılır.
  */
 @Service
 public class HisseService {
 
     private final HisseRepository repository;
+    private final SyncService syncService;
     private final Gson gson = new Gson();
 
-    public HisseService(HisseRepository repository) {
+    public HisseService(HisseRepository repository, SyncService syncService) {
         this.repository = repository;
+        this.syncService = syncService;
     }
 
     // ── DTO Records ──────────────────────────────────────────
 
     public record TaramaDurum(
         String sessionId, String durum, int tamamlanan, int toplam,
-        List<HisseDto> hisseler, List<String> hatalar
+        List<HisseDto> hisseler, List<String> hatalar,
+        double enflasyonOrani, boolean syncRunning
     ) {}
 
     public record HisseDto(
         String sembol, double dividendYield, double roe, double payoutRatio,
-        double sonFiyat, int temettuSayisi, int gunSayisi
+        double sonFiyat, int temettuSayisi, int gunSayisi,
+        String sektor, double fk, double pddd, double netKarMarji,
+        double ciroBuyumesi, double netBorcFavoek, double serbestNakitAkisi,
+        double gunlukOrtHacim
     ) {}
 
     public record DripSonuc(
@@ -44,7 +52,8 @@ public class HisseService {
         double portfoyDegeri, double reelDeger, double toplamGetiri, double cagr,
         double yilSayisi, String baslangicTarih, String bitisTarih,
         int temettuDagitimSayisi, double baslangicSermayesi, double toplamYatirilan,
-        double toplamReelYatirilan, double sonFiyat, double kalanNakit, List<TemettuOlay> olaylar
+        double toplamReelYatirilan, double sonFiyat, double kalanNakit,
+        List<TemettuOlay> olaylar, double kullanilanEnflasyon
     ) {}
 
     public record TemettuOlay(
@@ -55,27 +64,29 @@ public class HisseService {
     // ── Screener & Veri Çekme ────────────────────────────────
 
     public String taramaBaslat() {
-        // Artık tarama anında DB'den yapılıyor.
-        // Frontend yapısını (Polling) bozmamak için sahte bir sessionId dönüyoruz.
         return UUID.randomUUID().toString().substring(0, 8);
     }
 
     public TaramaDurum taramaDurumu(String sessionId) {
-        // Doğrudan Caching katmanından (SQLite) çok hızlı çekim
         List<HisseEntity> entities = repository.findAll();
         
         List<HisseDto> dtoList = entities.stream()
             .map(e -> new HisseDto(
                 e.getSembol(), e.getDividendYield(), e.getRoe(), e.getPayoutRatio(),
-                e.getSonFiyat(), e.getTemettuSayisi(), e.getGunSayisi()
+                e.getSonFiyat(), e.getTemettuSayisi(), e.getGunSayisi(),
+                e.getSektor() != null ? e.getSektor() : "",
+                e.getFk(), e.getPddd(), e.getNetKarMarji(),
+                e.getCiroBuyumesi(), e.getNetBorcFavoek(), e.getSerbestNakitAkisi(),
+                e.getGunlukOrtHacim()
             ))
             .sorted(Comparator.comparing(HisseDto::sembol))
             .toList();
 
-        // Her zaman %100 TAMAMLANDI dönüyoruz
         return new TaramaDurum(
             sessionId, "TAMAMLANDI", entities.size(), entities.size(),
-            dtoList, new ArrayList<>()
+            dtoList, new ArrayList<>(),
+            syncService.getGuncelEnflasyon(),
+            syncService.isSyncRunning()
         );
     }
 
@@ -89,6 +100,9 @@ public class HisseService {
         TreeMap<LocalDate, Double> temettu = parseMap(entity.getTemettuGecmisiJson());
 
         if (kapanis.isEmpty()) return null;
+
+        // Gerçek enflasyon oranını al (TCMB EVDS'den)
+        double enflasyon = syncService.getGuncelEnflasyon();
 
         LocalDate basTarih = kapanis.firstKey();
         double ilkFiyat = kapanis.firstEntry().getValue();
@@ -110,7 +124,7 @@ public class HisseService {
                 toplamYatirilan += aylikEkGirdi;
                 
                 double yil = ChronoUnit.DAYS.between(basTarih, date) / 365.25;
-                double deflator = Math.pow(1.40, yil);
+                double deflator = Math.pow(1 + enflasyon, yil);
                 toplamReelYatirilan += (aylikEkGirdi / deflator);
                 
                 kalanNakit += aylikEkGirdi;
@@ -149,12 +163,12 @@ public class HisseService {
         double yil = ChronoUnit.DAYS.between(basTarih, bitTarih) / 365.25;
         double cagr = yil > 0 ? Math.pow(portfoy / toplamYatirilan, 1.0 / yil) - 1.0 : 0;
         
-        // Basit Yıllık %40 Enflasyon Düzeltmesi (Reel Getiri)
-        double reelDeger = portfoy / Math.pow(1.40, yil);
+        // Gerçek enflasyon ile Reel Getiri
+        double reelDeger = portfoy / Math.pow(1 + enflasyon, yil);
 
         return new DripSonuc(sembol, basLot, lotSayisi, portfoy, reelDeger, topGetiri, cagr,
                 yil, basTarih.toString(), bitTarih.toString(), sayac, sermaye, toplamYatirilan,
-                toplamReelYatirilan, sonF, kalanNakit, olaylar);
+                toplamReelYatirilan, sonF, kalanNakit, olaylar, enflasyon);
     }
 
     private TreeMap<LocalDate, Double> parseMap(String json) {

@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BIST Analiz v2.0 — Temettü & DRIP Motoru</title>
-    <meta name="description" content="Borsa İstanbul hisseleri için temel analiz filtreleme ve DRIP simülasyon platformu">
+    <title>BIST Analiz v3.1 — Temettü Devleri & Agresif Büyüme Motoru</title>
+    <meta name="description" content="Borsa İstanbul hisseleri için Temettü Devleri ve Agresif Büyüme strateji filtreleme ve DRIP simülasyon platformu">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/css/style.css">
@@ -18,11 +18,16 @@
             <span class="logo-icon">📊</span>
             <div>
                 <h1>BIST Analiz</h1>
-                <span class="version">v2.0 — Temettü & DRIP Motoru</span>
+                <span class="version">v3.1 — Temettü Devleri & Agresif Büyüme Motoru</span>
             </div>
         </div>
-        <div class="header-stats" id="headerStats">
-            <div class="stat-chip"><span class="dot green"></span> Hazır</div>
+        <div class="header-right">
+            <div class="enflasyon-chip" id="enflasyonChip" title="TCMB EVDS'den çekilen güncel enflasyon oranı">
+                📈 Enflasyon: <span id="enflasyonDeger">-%</span>
+            </div>
+            <div class="header-stats" id="headerStats">
+                <div class="stat-chip"><span class="dot green"></span> Hazır</div>
+            </div>
         </div>
     </div>
 </header>
@@ -30,9 +35,73 @@
 <!-- ═══ MAIN CONTENT ═══ -->
 <main id="app-main">
 
+    <!-- ── Strategy Buttons ── -->
+    <section class="strategy-panel glass-card" id="strategyPanel">
+        <h2 class="panel-title">🎯 Yatırım Stratejileri</h2>
+        <p class="panel-desc">Profesyonel strateji filtreleri ile piyasayı analiz edin. Sektörel Z-Score normalizasyonu, hacim filtresi ve yatırım döngüsü kontrolü dahildir.</p>
+        <div class="strategy-grid">
+            <button class="strategy-card strategy-dividend" id="btnTemettuDevleri" onclick="loadStrategy('temettu-devleri')">
+                <div class="strategy-icon">⭐</div>
+                <div class="strategy-info">
+                    <h3>Temettü Devleri</h3>
+                    <span class="strategy-tag">Core / Defansif</span>
+                </div>
+                <p class="strategy-desc">Yield >%5 · ROE >%15 · Payout %40-%85 · F/K < Sektör Ort. · 5 yılda 4+ temettü</p>
+            </button>
+            <button class="strategy-card strategy-growth" id="btnAgresifBuyume" onclick="loadStrategy('agresif-buyume')">
+                <div class="strategy-icon">🚀</div>
+                <div class="strategy-info">
+                    <h3>Agresif Büyüme</h3>
+                    <span class="strategy-tag">Satellite / Ofansif</span>
+                </div>
+                <p class="strategy-desc">Rule of 40 · Ciro Büyümesi >%25 · Borç/FAVÖK <2.5 · Yatırım Döngüsü aktif</p>
+            </button>
+        </div>
+    </section>
+
+    <!-- ── Strategy Results ── -->
+    <section class="strategy-results glass-card" id="strategyResults" style="display:none;">
+        <div class="results-header">
+            <div>
+                <h2 class="panel-title" id="strategyTitle">📋 Strateji Sonuçları</h2>
+                <p class="strategy-result-desc" id="strategyDesc"></p>
+            </div>
+            <div class="results-meta">
+                <span id="stratFilteredCount" class="badge">0 hisse</span>
+                <span id="stratTotalCount" class="badge badge-dim">/ 0 taranan</span>
+                <button class="btn-close-strategy" onclick="closeStrategyResults()">✕</button>
+            </div>
+        </div>
+        <div class="sector-stats-container" id="sectorStats" style="display:none;">
+            <h3 class="sub-title">📊 Sektörel Normalizasyon İstatistikleri</h3>
+            <div class="sector-chips" id="sectorChips"></div>
+        </div>
+        <div class="table-wrapper">
+            <table id="strategyTable">
+                <thead>
+                    <tr>
+                        <th class="sortable" onclick="sortStratTable('skor')">Skor ↕</th>
+                        <th class="sortable" onclick="sortStratTable('sembol')">Sembol ↕</th>
+                        <th>Sektör</th>
+                        <th class="sortable" onclick="sortStratTable('sonFiyat')">Fiyat ↕</th>
+                        <th class="sortable" onclick="sortStratTable('dividendYield')">Yield ↕</th>
+                        <th class="sortable" onclick="sortStratTable('roe')">ROE ↕</th>
+                        <th class="sortable" onclick="sortStratTable('fk')">F/K ↕</th>
+                        <th class="sortable" onclick="sortStratTable('ciroBuyumesi')">Ciro Büy. ↕</th>
+                        <th class="sortable" onclick="sortStratTable('netKarMarji')">Net Marj ↕</th>
+                        <th class="sortable" onclick="sortStratTable('netBorcFavoek')">Borç/FAVÖK ↕</th>
+                        <th>Z-Score</th>
+                        <th>İşlem</th>
+                    </tr>
+                </thead>
+                <tbody id="strategyTableBody"></tbody>
+            </table>
+        </div>
+    </section>
+
     <!-- ── Filter Panel ── -->
     <section class="filter-panel glass-card" id="filterPanel">
-        <h2 class="panel-title">🔍 Filtreleme Kriterleri</h2>
+        <h2 class="panel-title">🔍 Genel Tarama & Filtreleme</h2>
         <div class="filter-grid">
             <div class="filter-group">
                 <label for="minYield">Min Temettü Verimi (%)</label>
@@ -66,8 +135,8 @@
                 <button id="btnScan" class="btn-primary" onclick="startScan()">
                     🚀 Piyasayı Tara
                 </button>
-                <button id="btnPortfolio" class="btn-primary" onclick="optimizePortfolio()" style="background: linear-gradient(135deg, #10b981, #059669);">
-                    📦 Sepeti Optimize Et
+                <button id="btnSync" class="btn-primary btn-sync" onclick="triggerSync()">
+                    🔄 Verileri Güncelle
                 </button>
             </div>
         </div>
@@ -97,12 +166,13 @@
             <table id="stockTable">
                 <thead>
                     <tr>
-                        <th style="width: 40px;"><input type="checkbox" id="selectAll" onclick="toggleSelectAll()"></th>
                         <th class="sortable" data-col="sembol" onclick="sortTable('sembol')">Sembol ↕</th>
+                        <th>Sektör</th>
                         <th class="sortable" data-col="sonFiyat" onclick="sortTable('sonFiyat')">Son Fiyat ↕</th>
                         <th class="sortable" data-col="dividendYield" onclick="sortTable('dividendYield')">Yield ↕</th>
                         <th class="sortable" data-col="roe" onclick="sortTable('roe')">ROE ↕</th>
                         <th class="sortable" data-col="payoutRatio" onclick="sortTable('payoutRatio')">Payout ↕</th>
+                        <th class="sortable" data-col="fk" onclick="sortTable('fk')">F/K ↕</th>
                         <th>Temettü</th>
                         <th>İşlem</th>
                     </tr>
