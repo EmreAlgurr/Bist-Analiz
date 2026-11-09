@@ -38,24 +38,87 @@
     <!-- ── Strategy Buttons ── -->
     <section class="strategy-panel glass-card" id="strategyPanel">
         <h2 class="panel-title">🎯 Yatırım Stratejileri</h2>
-        <p class="panel-desc">Profesyonel strateji filtreleri ile piyasayı analiz edin. Sektörel Z-Score normalizasyonu, hacim filtresi ve yatırım döngüsü kontrolü dahildir.</p>
+        <p class="panel-desc">Profesyonel strateji filtreleri ile piyasayı analiz edin. Eşik değerlerini ihtiyacınıza göre değiştirip çalıştırabilirsiniz.</p>
         <div class="strategy-grid">
-            <button class="strategy-card strategy-dividend" id="btnTemettuDevleri" onclick="loadStrategy('temettu-devleri')">
-                <div class="strategy-icon">⭐</div>
-                <div class="strategy-info">
-                    <h3>Temettü Devleri</h3>
-                    <span class="strategy-tag">Core / Defansif</span>
+
+            <!-- ── Temettü Devleri ── -->
+            <div class="strategy-card strategy-dividend" id="cardTemettu">
+                <div class="strategy-card-header" onclick="toggleStrategySettings('temettu')">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <div class="strategy-icon">⭐</div>
+                        <div class="strategy-info">
+                            <h3>Temettü Devleri</h3>
+                            <span class="strategy-tag">Core / Defansif</span>
+                        </div>
+                    </div>
+                    <span class="expand-icon" id="expandTemettu">▼</span>
                 </div>
-                <p class="strategy-desc">Yield >%5 · ROE >%15 · Payout %40-%85 · F/K < Sektör Ort. · 5 yılda 4+ temettü</p>
-            </button>
-            <button class="strategy-card strategy-growth" id="btnAgresifBuyume" onclick="loadStrategy('agresif-buyume')">
-                <div class="strategy-icon">🚀</div>
-                <div class="strategy-info">
-                    <h3>Agresif Büyüme</h3>
-                    <span class="strategy-tag">Satellite / Ofansif</span>
+                <div class="strategy-settings" id="settingsTemettu" style="display:none;">
+                    <div class="strat-param-grid">
+                        <div class="strat-param">
+                            <label>Min Temettü Verimi (%)</label>
+                            <input type="number" id="stTemettuMinYield" value="5" step="0.5" min="0" max="100">
+                        </div>
+                        <div class="strat-param">
+                            <label>Min ROE (%)</label>
+                            <input type="number" id="stTemettuMinRoe" value="15" step="1" min="0" max="100">
+                        </div>
+                        <div class="strat-param">
+                            <label>Min Dağıtım Oranı (%)</label>
+                            <input type="number" id="stTemettuMinPayout" value="40" step="5" min="0" max="100">
+                        </div>
+                        <div class="strat-param">
+                            <label>Max Dağıtım Oranı (%)</label>
+                            <input type="number" id="stTemettuMaxPayout" value="85" step="5" min="0" max="100">
+                        </div>
+                        <div class="strat-param">
+                            <label>Min Temettü Sayısı (5y)</label>
+                            <input type="number" id="stTemettuMinTemettu" value="4" step="1" min="0" max="20">
+                        </div>
+                    </div>
+                    <button class="btn-run-strategy btn-run-dividend" id="btnTemettuDevleri" onclick="loadStrategy('temettu-devleri')">
+                        ⭐ Temettü Devlerini Tara
+                    </button>
                 </div>
-                <p class="strategy-desc">Rule of 40 · Ciro Büyümesi >%25 · Borç/FAVÖK <2.5 · Yatırım Döngüsü aktif</p>
-            </button>
+            </div>
+
+            <!-- ── Agresif Büyüme ── -->
+            <div class="strategy-card strategy-growth" id="cardAgresif">
+                <div class="strategy-card-header" onclick="toggleStrategySettings('agresif')">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <div class="strategy-icon">🚀</div>
+                        <div class="strategy-info">
+                            <h3>Agresif Büyüme</h3>
+                            <span class="strategy-tag">Satellite / Ofansif</span>
+                        </div>
+                    </div>
+                    <span class="expand-icon" id="expandAgresif">▼</span>
+                </div>
+                <div class="strategy-settings" id="settingsAgresif" style="display:none;">
+                    <div class="strat-param-grid">
+                        <div class="strat-param">
+                            <label>Min Ciro Büyümesi (%)</label>
+                            <input type="number" id="stAgresifMinCiro" value="25" step="5" min="0" max="500">
+                        </div>
+                        <div class="strat-param">
+                            <label>Min Net Kâr Marjı (%)</label>
+                            <input type="number" id="stAgresifMinNetKar" value="0" step="1" min="-100" max="100">
+                        </div>
+                        <div class="strat-param">
+                            <label>Max F/K</label>
+                            <input type="number" id="stAgresifMaxFk" value="50" step="5" min="1" max="500">
+                        </div>
+                        <div class="strat-param">
+                            <label>Max Borç/FAVÖK</label>
+                            <input type="number" id="stAgresifMaxBorc" value="2.5" step="0.5" min="0" max="100">
+                        </div>
+                    </div>
+                    <button class="btn-run-strategy btn-run-growth" id="btnAgresifBuyume" onclick="loadStrategy('agresif-buyume')">
+                        🚀 Agresif Büyümeyi Tara
+                    </button>
+                </div>
+            </div>
+
         </div>
     </section>
 
@@ -196,6 +259,74 @@
                 <p>DRIP Simülasyonu hesaplanıyor...</p>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- ═══ EDIT MODAL ═══ -->
+<div class="modal-overlay" id="editModal" style="display:none;" onclick="closeEditModalOverlay(event)">
+    <div class="modal-content glass-card edit-modal-content" onclick="event.stopPropagation()">
+        <button class="modal-close" onclick="closeEditModal()">✕</button>
+        <div class="edit-modal-header">
+            <h3 id="editModalTitle">✏️ Hisse Düzenle</h3>
+            <p class="edit-modal-subtitle">Değerleri değiştirip kaydedin. Otomatik veriler bir sonraki senkronizasyonda üzerine yazılabilir.</p>
+        </div>
+        <form id="editForm" onsubmit="submitEdit(event)">
+            <div class="edit-form-grid">
+                <div class="edit-field">
+                    <label for="editSonFiyat">Son Fiyat (₺)</label>
+                    <input type="number" id="editSonFiyat" step="0.01" min="0">
+                </div>
+                <div class="edit-field">
+                    <label for="editDividendYield">Temettü Verimi (ör: 0.08 = %8)</label>
+                    <input type="number" id="editDividendYield" step="0.001" min="0" max="10">
+                </div>
+                <div class="edit-field">
+                    <label for="editRoe">ROE (ör: 0.25 = %25)</label>
+                    <input type="number" id="editRoe" step="0.001">
+                </div>
+                <div class="edit-field">
+                    <label for="editPayoutRatio">Dağıtım Oranı (ör: 0.60 = %60)</label>
+                    <input type="number" id="editPayoutRatio" step="0.01" min="0">
+                </div>
+                <div class="edit-field">
+                    <label for="editFk">F/K (Fiyat/Kazanç)</label>
+                    <input type="number" id="editFk" step="0.1" min="0">
+                </div>
+                <div class="edit-field">
+                    <label for="editPddd">PD/DD</label>
+                    <input type="number" id="editPddd" step="0.01" min="0">
+                </div>
+                <div class="edit-field">
+                    <label for="editNetKarMarji">Net Kâr Marjı (ör: 0.15 = %15)</label>
+                    <input type="number" id="editNetKarMarji" step="0.001">
+                </div>
+                <div class="edit-field">
+                    <label for="editCiroBuyumesi">Ciro Büyümesi (ör: 0.30 = %30)</label>
+                    <input type="number" id="editCiroBuyumesi" step="0.001">
+                </div>
+                <div class="edit-field">
+                    <label for="editNetBorcFavoek">Borç/FAVÖK</label>
+                    <input type="number" id="editNetBorcFavoek" step="0.1">
+                </div>
+                <div class="edit-field">
+                    <label for="editSerbestNakitAkisi">Serbest Nakit Akışı</label>
+                    <input type="number" id="editSerbestNakitAkisi" step="1000">
+                </div>
+                <div class="edit-field">
+                    <label for="editSektor">Sektör</label>
+                    <input type="text" id="editSektor">
+                </div>
+                <div class="edit-field">
+                    <label for="editTemettuSayisi">Temettü Sayısı (5y)</label>
+                    <input type="number" id="editTemettuSayisi" step="1" min="0">
+                </div>
+            </div>
+            <input type="hidden" id="editSembol">
+            <div class="edit-form-actions">
+                <button type="button" class="btn-cancel" onclick="closeEditModal()">İptal</button>
+                <button type="submit" class="btn-save" id="editSaveBtn">💾 Kaydet</button>
+            </div>
+        </form>
     </div>
 </div>
 

@@ -113,9 +113,16 @@ public class StrategyScreenerService {
      * - Son 5 yılın en az 4'ünde temettü dağıtmış
      * - Hacim filtresi (likidite)
      */
-    public StrategyResult temettuDevleri() {
+    public StrategyResult temettuDevleri(Map<String, String> params) {
         List<HisseEntity> tumHisseler = repository.findAll();
         Map<String, SektorIstatistik> sektorStats = sektorIstatistikleriniHesapla(tumHisseler);
+
+        // Kullanıcının değiştirebildiği eşikler (varsayılanlar mevcut değerler)
+        double pMinYield    = getParam(params, "minYield", 0.05);
+        double pMinPayout   = getParam(params, "minPayout", 0.40);
+        double pMaxPayout   = getParam(params, "maxPayout", 0.85);
+        double pMinRoe      = getParam(params, "minRoe", 0.15);
+        int    pMinTemettu  = (int) getParam(params, "minTemettu", 4);
 
         List<ScreenedStock> sonuclar = new ArrayList<>();
 
@@ -123,17 +130,17 @@ public class StrategyScreenerService {
             // Hacim Filtresi
             if (h.getGunlukOrtHacim() < minGunlukHacim && h.getGunlukOrtHacim() > 0) continue;
 
-            // 1) Temettü Verimi > %5
-            if (h.getDividendYield() < 0.05) continue;
+            // 1) Temetü Verimi
+            if (h.getDividendYield() < pMinYield) continue;
 
-            // 2) Dağıtım Oranı %40 - %85
-            if (h.getPayoutRatio() < 0.40 || h.getPayoutRatio() > 0.85) continue;
+            // 2) Dağıtım Oranı
+            if (h.getPayoutRatio() < pMinPayout || h.getPayoutRatio() > pMaxPayout) continue;
 
-            // 3) ROE > %15
-            if (h.getRoe() < 0.15) continue;
+            // 3) ROE
+            if (h.getRoe() < pMinRoe) continue;
 
-            // 4) Temettü İstikrarı: Son 5 yılda en az 4 temettü
-            if (h.getTemettuSayisi() < 4) continue;
+            // 4) Temetü İstikrarı
+            if (h.getTemettuSayisi() < pMinTemettu) continue;
 
             // Sektörel Z-Score Hesapla
             double fkZ = 0, roeZ = 0;
@@ -146,17 +153,21 @@ public class StrategyScreenerService {
                 roeZ = calculateZScore(h.getRoe(), tumHisseler, "roe", h.getSektor());
             }
 
-            // Temettü Devleri Skoru (0-100)
+            // Temetü Devleri Skoru (0-100)
             double skor = hesaplaTemettuSkoru(h, fkZ, roeZ);
 
-            sonuclar.add(buildScreenedStock(h, skor, fkZ, roeZ, "⭐ Temettü Devi"));
+            sonuclar.add(buildScreenedStock(h, skor, fkZ, roeZ, "⭐ Temetü Devi"));
         }
 
         sonuclar.sort(Comparator.comparingDouble(ScreenedStock::skor).reversed());
 
+        String aciklama = String.format(
+            "Yield ≥ %%%.0f · ROE ≥ %%%.0f · Payout %%%.0f-%%%.0f · Min %d temetü",
+            pMinYield * 100, pMinRoe * 100, pMinPayout * 100, pMaxPayout * 100, pMinTemettu
+        );
+
         return new StrategyResult(
-            "Temettü Devleri",
-            "Nakit akışı sağlayan, kârını paylaşan, piyasa volatilitesine dayanıklı defansif devler.",
+            "Temetü Devleri", aciklama,
             tumHisseler.size(), sonuclar.size(), sonuclar, sektorStats
         );
     }
@@ -179,15 +190,20 @@ public class StrategyScreenerService {
      * - Yatırım Döngüsü (CapEx/Depreciation > 1)
      * - Hacim filtresi
      */
-    public StrategyResult agresifBuyume() {
+    public StrategyResult agresifBuyume(Map<String, String> params) {
         List<HisseEntity> tumHisseler = repository.findAll();
         Map<String, SektorIstatistik> sektorStats = sektorIstatistikleriniHesapla(tumHisseler);
+
+        // Kullanıcının değiştirebildiği eşikler
+        double pMinCiroBuyume  = getParam(params, "minCiroBuyume", 0.25);
+        double pMinNetKarMarji = getParam(params, "minNetKarMarji", 0.0);
+        double pMaxFk          = getParam(params, "maxFk", 50.0);
+        double pMaxBorcFavoek  = getParam(params, "maxBorcFavoek", 2.5);
 
         List<ScreenedStock> sonuclar = new ArrayList<>();
 
         for (HisseEntity h : tumHisseler) {
             // ══ SERT KURAL 1: Sektör Kısıtı ══
-            // Finans, GYO, Ağır Sanayi/Holding sektörlerini EXCLUDE et
             String sektor = h.getSektor();
             if (sektor == null || sektor.isBlank()) continue;
             if (AGRESIF_EXCLUDE_SEKTORLER.contains(sektor)) continue;
@@ -195,18 +211,17 @@ public class StrategyScreenerService {
             // ══ Hacim Filtresi ══
             if (h.getGunlukOrtHacim() < minGunlukHacim && h.getGunlukOrtHacim() > 0) continue;
 
-            // ══ SERT KURAL 2: Ciro Büyümesi > %25 ══
-            if (h.getCiroBuyumesi() < 0.25) continue;
+            // ══ SERT KURAL 2: Ciro Büyümesi ══
+            if (h.getCiroBuyumesi() < pMinCiroBuyume) continue;
 
-            // ══ SERT KURAL 3: Net Kâr Marjı > 0 (Zarar yazmamış) ══
-            if (h.getNetKarMarji() <= 0) continue;
+            // ══ SERT KURAL 3: Net Kâr Marjı ══
+            if (h.getNetKarMarji() <= pMinNetKarMarji) continue;
 
-            // ══ SERT KURAL 4: F/K Limitörü (0 < F/K < 50) ══
-            // F/K 0 ise veri yoktur, 50+ ise balon/anomali
-            if (h.getFk() <= 0 || h.getFk() > 50) continue;
+            // ══ SERT KURAL 4: F/K Limitörü ══
+            if (h.getFk() <= 0 || h.getFk() > pMaxFk) continue;
 
             // ══ SERT KURAL 5: Borçluluk kontrolü ══
-            if (h.getNetBorcFavoek() > 2.5 && h.getNetBorcFavoek() != 0) continue;
+            if (h.getNetBorcFavoek() > pMaxBorcFavoek && h.getNetBorcFavoek() != 0) continue;
 
             // ── Rule of 40 hesapla ──
             double ruleOf40 = (h.getCiroBuyumesi() * 100) + (h.getNetKarMarji() * 100);
@@ -231,10 +246,13 @@ public class StrategyScreenerService {
 
         sonuclar.sort(Comparator.comparingDouble(ScreenedStock::skor).reversed());
 
+        String aciklama = String.format(
+            "Ciro Büyümesi ≥ %%%.0f · Net Marj > %%%.0f · F/K < %.0f · Borç/FAVÖK < %.1f | Finans, GYO, Ağır Sanayi hariç.",
+            pMinCiroBuyume * 100, pMinNetKarMarji * 100, pMaxFk, pMaxBorcFavoek
+        );
+
         return new StrategyResult(
-            "Agresif Büyüme",
-            "Teknoloji, yenilenebilir enerji ve telekom sektöründen; cirosunu katlayan, kârlı, yarının devleri. " +
-            "Finans, GYO ve ağır sanayi hariç tutulmuştur.",
+            "Agresif Büyüme", aciklama,
             tumHisseler.size(), sonuclar.size(), sonuclar, sektorStats
         );
     }
@@ -364,5 +382,16 @@ public class StrategyScreenerService {
 
     private String nvl(String s) {
         return s != null && !s.isBlank() ? s : "Bilinmiyor";
+    }
+
+    private double getParam(Map<String, String> params, String key, double defaultVal) {
+        if (params != null && params.containsKey(key)) {
+            try {
+                return Double.parseDouble(params.get(key));
+            } catch (NumberFormatException e) {
+                return defaultVal;
+            }
+        }
+        return defaultVal;
     }
 }

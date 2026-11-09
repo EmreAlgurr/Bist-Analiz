@@ -77,10 +77,28 @@ async function loadStrategy(type) {
         : document.getElementById('btnAgresifBuyume');
 
     btn.classList.add('loading');
+    btn.disabled = true;
     updateHeaderStatus('yellow', 'Strateji analizi yapılıyor...');
 
+    // Kullanıcının girdiği eşik değerlerinden query string oluştur
+    let queryParams = '';
+    if (type === 'temettu-devleri') {
+        const minYield   = parseFloat(document.getElementById('stTemettuMinYield').value) / 100;
+        const minRoe     = parseFloat(document.getElementById('stTemettuMinRoe').value) / 100;
+        const minPayout  = parseFloat(document.getElementById('stTemettuMinPayout').value) / 100;
+        const maxPayout  = parseFloat(document.getElementById('stTemettuMaxPayout').value) / 100;
+        const minTemettu = parseInt(document.getElementById('stTemettuMinTemettu').value);
+        queryParams = `?minYield=${minYield}&minRoe=${minRoe}&minPayout=${minPayout}&maxPayout=${maxPayout}&minTemettu=${minTemettu}`;
+    } else {
+        const minCiro    = parseFloat(document.getElementById('stAgresifMinCiro').value) / 100;
+        const minNetKar  = parseFloat(document.getElementById('stAgresifMinNetKar').value) / 100;
+        const maxFk      = parseFloat(document.getElementById('stAgresifMaxFk').value);
+        const maxBorc    = parseFloat(document.getElementById('stAgresifMaxBorc').value);
+        queryParams = `?minCiroBuyume=${minCiro}&minNetKarMarji=${minNetKar}&maxFk=${maxFk}&maxBorcFavoek=${maxBorc}`;
+    }
+
     try {
-        const res = await fetch('/api/strateji/' + type);
+        const res = await fetch('/api/strateji/' + type + queryParams);
         if (!res.ok) throw new Error('Strateji API hatası: ' + res.status);
         const data = await res.json();
 
@@ -92,6 +110,24 @@ async function loadStrategy(type) {
         updateHeaderStatus('red', 'Hata!');
     } finally {
         btn.classList.remove('loading');
+        btn.disabled = false;
+    }
+}
+
+function toggleStrategySettings(strategyId) {
+    const settingsId = strategyId === 'temettu' ? 'settingsTemettu' : 'settingsAgresif';
+    const expandId   = strategyId === 'temettu' ? 'expandTemettu' : 'expandAgresif';
+    const settings = document.getElementById(settingsId);
+    const icon = document.getElementById(expandId);
+
+    if (settings.style.display === 'none') {
+        settings.style.display = 'block';
+        icon.textContent = '▲';
+        icon.classList.add('expanded');
+    } else {
+        settings.style.display = 'none';
+        icon.textContent = '▼';
+        icon.classList.remove('expanded');
     }
 }
 
@@ -157,7 +193,10 @@ function renderStrategyTable() {
             <td class="${h.netKarMarji >= 0.10 ? 'val-positive' : h.netKarMarji > 0 ? 'val-neutral' : 'val-negative'}">${fmtPct(h.netKarMarji)}</td>
             <td class="${h.netBorcFavoek < 2.5 ? 'val-positive' : 'val-negative'}">${h.netBorcFavoek > 0 ? h.netBorcFavoek.toFixed(1) + 'x' : '-'}</td>
             <td class="zscore-cell">${zLabel} ${roeZLabel}</td>
-            <td><button class="btn-drip" onclick="openDrip('${h.sembol}')">💰 DRIP</button></td>
+            <td class="action-cell">
+                <button class="btn-edit" onclick="openEditModal('${h.sembol}')" title="Düzenle">✏️</button>
+                <button class="btn-drip" onclick="openDrip('${h.sembol}')">💰 DRIP</button>
+            </td>
         </tr>`;
     }).join('');
 }
@@ -229,7 +268,10 @@ function renderTable() {
             <td class="${payoutClass(h.payoutRatio)}">${fmtPct(h.payoutRatio)}</td>
             <td class="val-neutral">${h.fk > 0 ? h.fk.toFixed(1) : '-'}</td>
             <td class="val-neutral">${h.temettuSayisi}</td>
-            <td><button class="btn-drip" onclick="openDrip('${h.sembol}')">💰 DRIP</button></td>
+            <td class="action-cell">
+                <button class="btn-edit" onclick="openEditModal('${h.sembol}')" title="Düzenle">✏️</button>
+                <button class="btn-drip" onclick="openDrip('${h.sembol}')">💰 DRIP</button>
+            </td>
         </tr>
     `).join('');
 }
@@ -404,3 +446,99 @@ function updateHeaderStatus(color, text) {
 ['minYield','minRoe','minPayout','maxPayout','maxFk','minNetKarMarji','minCiroBuyumesi','maxBorcFavoek','searchBox'].forEach(id => {
     document.getElementById(id).addEventListener('input', () => { if (allStocks.length) renderTable(); });
 });
+
+/* ══════════════════════════════════════════════════════════════
+   EDIT MODAL — Manuel Veri Düzenleme
+   ══════════════════════════════════════════════════════════════ */
+
+async function openEditModal(sembol) {
+    const modal = document.getElementById('editModal');
+    modal.style.display = 'flex';
+
+    document.getElementById('editModalTitle').textContent = '✏️ ' + sembol.replace('.IS', '') + ' Düzenle';
+    document.getElementById('editSembol').value = sembol;
+
+    // Mevcut değerleri API'den çek
+    try {
+        const res = await fetch('/api/hisse/' + encodeURIComponent(sembol));
+        if (!res.ok) throw new Error('Hisse bulunamadı');
+        const h = await res.json();
+
+        document.getElementById('editSonFiyat').value = h.sonFiyat || 0;
+        document.getElementById('editDividendYield').value = h.dividendYield || 0;
+        document.getElementById('editRoe').value = h.roe || 0;
+        document.getElementById('editPayoutRatio').value = h.payoutRatio || 0;
+        document.getElementById('editFk').value = h.fk || 0;
+        document.getElementById('editPddd').value = h.pddd || 0;
+        document.getElementById('editNetKarMarji').value = h.netKarMarji || 0;
+        document.getElementById('editCiroBuyumesi').value = h.ciroBuyumesi || 0;
+        document.getElementById('editNetBorcFavoek').value = h.netBorcFavoek || 0;
+        document.getElementById('editSerbestNakitAkisi').value = h.serbestNakitAkisi || 0;
+        document.getElementById('editSektor').value = h.sektor || '';
+        document.getElementById('editTemettuSayisi').value = h.temettuSayisi || 0;
+    } catch (e) {
+        alert('Hisse verisi yüklenemedi: ' + e.message);
+        closeEditModal();
+    }
+}
+
+async function submitEdit(event) {
+    event.preventDefault();
+    const sembol = document.getElementById('editSembol').value;
+    const btn = document.getElementById('editSaveBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Kaydediliyor...';
+
+    const payload = {
+        sonFiyat: parseFloat(document.getElementById('editSonFiyat').value),
+        dividendYield: parseFloat(document.getElementById('editDividendYield').value),
+        roe: parseFloat(document.getElementById('editRoe').value),
+        payoutRatio: parseFloat(document.getElementById('editPayoutRatio').value),
+        fk: parseFloat(document.getElementById('editFk').value),
+        pddd: parseFloat(document.getElementById('editPddd').value),
+        netKarMarji: parseFloat(document.getElementById('editNetKarMarji').value),
+        ciroBuyumesi: parseFloat(document.getElementById('editCiroBuyumesi').value),
+        netBorcFavoek: parseFloat(document.getElementById('editNetBorcFavoek').value),
+        serbestNakitAkisi: parseFloat(document.getElementById('editSerbestNakitAkisi').value),
+        sektor: document.getElementById('editSektor').value,
+        temettuSayisi: parseInt(document.getElementById('editTemettuSayisi').value)
+    };
+
+    try {
+        const res = await fetch('/api/hisse/' + encodeURIComponent(sembol), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.mesaj || 'Güncelleme hatası');
+
+        // Lokal tabloyu güncelle (tekrar API çağrısı yapmadan)
+        const updateLocal = (list) => {
+            const idx = list.findIndex(s => s.sembol === sembol);
+            if (idx !== -1) {
+                Object.assign(list[idx], payload);
+            }
+        };
+        updateLocal(allStocks);
+        updateLocal(strategyStocks);
+
+        renderTable();
+        if (strategyStocks.length > 0) renderStrategyTable();
+
+        closeEditModal();
+        updateHeaderStatus('green', '✅ ' + sembol.replace('.IS','') + ' güncellendi');
+    } catch (e) {
+        alert('Kayıt hatası: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '💾 Kaydet';
+    }
+}
+
+function closeEditModal() {
+    document.getElementById('editModal').style.display = 'none';
+}
+function closeEditModalOverlay(e) {
+    if (e.target === document.getElementById('editModal')) closeEditModal();
+}
